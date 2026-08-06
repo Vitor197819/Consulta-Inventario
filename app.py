@@ -1,4 +1,3 @@
-
 import os
 import io
 import re
@@ -275,32 +274,59 @@ with tab_query:
         st.info("Un administrador debe cargar primero los archivos diarios.")
     else:
         sales, inventory = load_tables()
-        query_text = st.text_area(
-            "Ingrese uno o varios códigos",
-            placeholder="Ejemplo:\n123456\n789012",
-            height=130,
-        )
+
+        with st.form("consulta_form", clear_on_submit=False):
+            query_text = st.text_input(
+                "Ingrese uno o varios códigos",
+                placeholder="Ejemplo: 3027003 o 3027003, 3027004, 3027005",
+                help="Escriba o pegue los códigos separados por espacio, coma o punto y coma. Presione Enter para consultar.",
+            )
+            submitted = st.form_submit_button("Consultar", type="primary")
+
         codes = []
         for token in re.split(r"[\s,;]+", query_text.strip()):
             token = re.sub(r"\.0$", "", token.strip()).upper()
             if token and token not in codes:
                 codes.append(token)
 
-        if st.button("Consultar", type="primary", disabled=not codes):
-            summary, detail, total_sales = query_codes(codes, sales, inventory)
-            st.session_state["summary"] = summary
-            st.session_state["detail"] = detail
-            st.session_state["total_sales"] = total_sales
+        if submitted:
+            if not codes:
+                st.warning("Ingrese al menos un código.")
+            else:
+                summary, detail, total_sales = query_codes(codes, sales, inventory)
+                st.session_state["summary"] = summary
+                st.session_state["detail"] = detail
+                st.session_state["total_sales"] = total_sales
 
         if "summary" in st.session_state:
             summary = st.session_state["summary"].copy()
             detail = st.session_state["detail"].copy()
             total_sales = st.session_state["total_sales"]
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Venta total del archivo", f"Q {total_sales:,.2f}")
-            c2.metric("Códigos consultados", len(summary))
-            c3.metric("Existencia combinada", f"{summary['existencia_total'].sum():,.0f}")
+            if len(summary) == 1:
+                row = summary.iloc[0]
+                product_name = row.get("nombre", "") or "Producto sin descripción"
+                st.subheader(f"{row['codigo']} · {product_name}")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Existencia total", f"{row['existencia_total']:,.0f}")
+                m2.metric("% de la venta total", f"{row['porcentaje_venta_total']:.4f} %")
+                m3.metric("Venta neta del código", f"Q {row['venta_neta']:,.2f}")
+                m4.metric("Unidades netas", f"{row['unidades_netas']:,.0f}")
+                st.caption(
+                    f"Venta total utilizada como base: Q {total_sales:,.2f} · "
+                    f"Estado: {row['estado']} · "
+                    f"Tiendas en 0: {row['tiendas_sin_existencia']} · "
+                    f"Tiendas en 1: {row['tiendas_con_una_unidad']}"
+                )
+            else:
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Existencia combinada", f"{summary['existencia_total'].sum():,.0f}")
+                m2.metric("Venta neta consultada", f"Q {summary['venta_neta'].sum():,.2f}")
+                pct = (summary['venta_neta'].sum() / total_sales * 100) if total_sales else 0
+                m3.metric("% conjunto de la venta", f"{pct:.4f} %")
+                st.caption(
+                    f"{len(summary)} códigos consultados · Venta total utilizada como base: Q {total_sales:,.2f}"
+                )
 
             display = summary.rename(columns={
                 "codigo": "Código",
