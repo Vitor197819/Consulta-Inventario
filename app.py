@@ -350,7 +350,7 @@ def save_database(sales, inventory, sales_name, inventory_name):
         "date_min": valid_dates.min().strftime("%d/%m/%Y") if len(valid_dates) else "No detectada",
         "date_max": valid_dates.max().strftime("%d/%m/%Y") if len(valid_dates) else "No detectada",
         "days": str(valid_dates.dt.normalize().nunique()) if len(valid_dates) else "0",
-        "total_sales": str(float(sales["venta_neta"].sum())),
+        "total_sales": str(float(sales["venta"].sum())),
     }
 
     for key, value in metadata.items():
@@ -389,7 +389,7 @@ def first_nonempty(series):
 
 
 def calculate_results(codes, sales, inventory):
-    total_sales = float(sales["venta_neta"].sum())
+    total_sales = float(sales["venta"].sum())
 
     sales_selected = sales[sales["codigo"].isin(codes)].copy()
     inventory_selected = inventory[inventory["codigo"].isin(codes)].copy()
@@ -522,7 +522,7 @@ with query_tab:
                     f"{row['existencia_total']:,.0f}",
                 )
                 main_2.metric(
-                    "% de la venta total",
+                    "% de la venta bruta total",
                     f"{row['porcentaje_venta_total']:.4f}%",
                 )
 
@@ -534,7 +534,7 @@ with query_tab:
 
                 st.markdown(
                     f'<div class="small-reference">'
-                    f'Venta neta total del archivo: Q {total_sales:,.2f} · '
+                    f'Venta bruta total usada como base: Q {total_sales:,.2f} · '
                     f'Estado: {row["estado"]} · '
                     f'Categoría: {row["categoria"] or "—"} · '
                     f'Línea: {row["linea"] or "—"}'
@@ -551,7 +551,7 @@ with query_tab:
                     "categoria": "Categoría",
                     "linea": "Línea",
                     "existencia_total": "Existencia total",
-                    "porcentaje_venta_total": "% venta total",
+                    "porcentaje_venta_total": "% venta bruta",
                     "venta_neta": "Venta neta",
                     "unidades_netas": "Unidades netas",
                     "tiendas_en_0": "Tiendas en 0",
@@ -562,7 +562,7 @@ with query_tab:
             )
 
             columns = [
-                "Código", "Producto", "Existencia total", "% venta total",
+                "Código", "Producto", "Existencia total", "% venta bruta",
                 "Venta neta", "Unidades netas", "Tiendas en 0",
                 "Tiendas en 1", "Estado"
             ]
@@ -573,7 +573,7 @@ with query_tab:
                 hide_index=True,
                 column_config={
                     "Existencia total": st.column_config.NumberColumn(format="%.0f"),
-                    "% venta total": st.column_config.NumberColumn(format="%.4f %%"),
+                    "% venta bruta": st.column_config.NumberColumn(format="%.4f %%"),
                     "Venta neta": st.column_config.NumberColumn(format="Q %.2f"),
                     "Unidades netas": st.column_config.NumberColumn(format="%.0f"),
                 },
