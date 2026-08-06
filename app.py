@@ -1,435 +1,723 @@
 
-import os
 import io
+import os
 import re
 import sqlite3
-import hashlib
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-APP_TITLE = "Consulta de Existencias y Ventas"
+APP_NAME = "Consulta de Inventario y Participación de Venta"
 DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = DATA_DIR / "app.db"
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "cambiar-esta-clave")
+DB_PATH = DATA_DIR / "inventario.db"
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Cambiar123")
 
-st.set_page_config(page_title=APP_TITLE, page_icon="📦", layout="wide")
+st.set_page_config(
+    page_title=APP_NAME,
+    page_icon="📦",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
-COLUMN_ALIASES = {
-    "codigo": ["CODIGO", "CODAMA", "COD_ARTICULO", "CODPRODUCTO", "SKU", "ITEM"],
-    "tienda": ["TIENDA", "TIENAT", "COD_TIENDA", "SUCURSAL"],
-    "existencia": ["EXIST", "EXISTENCIA", "STOCK", "CANT_EXISTENCIA", "INVENTARIO"],
-    "nombre": ["NOMBRE", "DESCRIPCION", "DESC_ARTICULO", "PRODUCTO"],
+st.markdown(
+    """
+    <style>
+    .block-container {padding-top: 1.4rem; max-width: 1450px;}
+    [data-testid="stMetricValue"] {font-size: 2.3rem;}
+    div[data-testid="stForm"] {border: 0; padding: 0;}
+    .small-reference {
+        color: #6b7280;
+        font-size: 0.9rem;
+        margin-top: -0.4rem;
+        margin-bottom: 1rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+ALIASES = {
+    "codigo": [
+        "CODIGO", "CODAMA", "COD_ARTICULO", "CODPRODUCTO", "SKU", "ITEM",
+        "COD_ART", "COD"
+    ],
+    "tienda": [
+        "TIENDA", "TIENAT", "COD_TIENDA", "SUCURSAL", "ALMACEN",
+        "CODALMACEN"
+    ],
+    "existencia": [
+        "EXIST", "EXISTENCIA", "STOCK", "INVENTARIO", "EXIST_ACTUAL",
+        "CANT_EXISTENCIA", "EXACAT"
+    ],
+    "nombre": [
+        "NOMBRE", "DESCRIPCION", "DESC_ARTICULO", "PRODUCTO",
+        "DESCRIPCION_ARTICULO"
+    ],
     "categoria": ["CATEGORIA", "DEPARTAMENTO", "DEPTO"],
     "linea": ["LINEA", "SUBCATEGORIA"],
-    "monto_venta": ["MONTO_VENTA", "VENTA", "VENTA_NETA", "MONTO"],
+    "fecha": ["FECHA", "DATE", "FECHA_VENTA"],
+    "dia": ["DIA"],
+    "mes": ["MES"],
+    "anno": ["ANNO", "ANO", "AÑO"],
+    "monto_venta": ["MONTO_VENTA", "VENTA", "VENTA_BRUTA"],
     "monto_devolucion": ["MONTO_DEVOLUCION", "DEVOLUCION"],
     "monto_anulacion": ["MONTO_ANULACION", "ANULACION"],
-    "cantidad_venta": ["CANTIDAD_VENTA_UNIDADES", "CANTIDAD", "UNIDADES_VENDIDAS"],
-    "cantidad_devolucion": ["CANTIDAD_DEVOLUCION_UNIDADES", "UNIDADES_DEVUELTAS"],
-    "cantidad_anulacion": ["CANTIDAD_ANULACION_UNIDADES", "UNIDADES_ANULADAS"],
+    "cantidad_venta": [
+        "CANTIDAD_VENTA_UNIDADES", "CANTIDAD_VENTA", "UNIDADES_VENDIDAS",
+        "CANTIDAD"
+    ],
+    "cantidad_devolucion": [
+        "CANTIDAD_DEVOLUCION_UNIDADES", "UNIDADES_DEVUELTAS"
+    ],
+    "cantidad_anulacion": [
+        "CANTIDAD_ANULACION_UNIDADES", "UNIDADES_ANULADAS"
+    ],
 }
 
-def normalize_col(value):
+
+def normalize_header(value):
     value = str(value).strip().upper()
-    value = re.sub(r"\s+", "_", value)
+    replacements = str.maketrans("ÁÉÍÓÚÜÑ", "AEIOUUN")
+    value = value.translate(replacements)
+    value = re.sub(r"[\s\-./]+", "_", value)
     value = re.sub(r"[^A-Z0-9_]", "", value)
-    return value
+    return value.strip("_")
+
 
 def find_column(df, logical_name, required=False):
-    normalized = {normalize_col(c): c for c in df.columns}
-    for alias in COLUMN_ALIASES[logical_name]:
-        if normalize_col(alias) in normalized:
-            return normalized[normalize_col(alias)]
+    normalized = {normalize_header(col): col for col in df.columns}
+    for alias in ALIASES[logical_name]:
+        key = normalize_header(alias)
+        if key in normalized:
+            return normalized[key]
     if required:
+        available = ", ".join(map(str, df.columns[:30]))
         raise ValueError(
             f"No se encontró la columna requerida '{logical_name}'. "
-            f"Columnas disponibles: {', '.join(map(str, df.columns))}"
+            f"Columnas detectadas: {available}"
         )
     return None
 
-def normalize_code(series):
-    s = series.astype(str).str.strip()
-    s = s.str.replace(r"\.0$", "", regex=True)
-    return s.str.upper()
+
+def clean_code(series):
+    result = series.astype(str).str.strip()
+    result = result.str.replace(r"\.0$", "", regex=True)
+    result = result.str.replace(r"\s+", "", regex=True)
+    return result.str.upper()
+
+
+def clean_store(series):
+    result = series.astype(str).str.strip()
+    result = result.str.replace(r"\.0$", "", regex=True)
+    return result.str.upper()
+
 
 def parse_number(series):
-    s = series.astype(str).str.strip()
-    s = s.str.replace(r"[^\d,\.\-]", "", regex=True)
-
-    def convert(v):
-        if v in ("", "-", "nan", "None"):
+    def convert(value):
+        text = str(value).strip()
+        if text.lower() in {"", "nan", "none", "null", "-"}:
             return 0.0
-        if "," in v and "." in v:
-            # El último separador se considera decimal.
-            if v.rfind(",") > v.rfind("."):
-                v = v.replace(".", "").replace(",", ".")
+
+        text = re.sub(r"[^\d,.\-]", "", text)
+        if not text or text == "-":
+            return 0.0
+
+        if "," in text and "." in text:
+            if text.rfind(",") > text.rfind("."):
+                text = text.replace(".", "").replace(",", ".")
             else:
-                v = v.replace(",", "")
-        elif "," in v:
-            parts = v.split(",")
-            if len(parts[-1]) in (1, 2):
-                v = v.replace(".", "").replace(",", ".")
+                text = text.replace(",", "")
+        elif "," in text:
+            last = text.split(",")[-1]
+            if len(last) in (1, 2):
+                text = text.replace(".", "").replace(",", ".")
             else:
-                v = v.replace(",", "")
+                text = text.replace(",", "")
+
         try:
-            return float(v)
+            return float(text)
         except ValueError:
             return 0.0
 
-    return s.map(convert)
+    return series.map(convert)
 
-def read_csv_flexible(uploaded_file):
-    raw = uploaded_file.getvalue()
-    errors = []
-    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin1"):
-        for sep in (None, ";", ",", "\t"):
+
+def read_csv_file(uploaded):
+    raw = uploaded.getvalue()
+    attempts = []
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin1"):
+        for separator in (",", ";", "\t"):
             try:
-                return pd.read_csv(
+                df = pd.read_csv(
                     io.BytesIO(raw),
-                    encoding=enc,
-                    sep=sep,
-                    engine="python",
                     dtype=str,
+                    encoding=encoding,
+                    sep=separator,
                     keep_default_na=False,
+                    low_memory=False,
                 )
+                if len(df.columns) >= 3:
+                    return df
             except Exception as exc:
-                errors.append(str(exc))
-    raise ValueError("No fue posible leer el CSV.")
+                attempts.append(str(exc))
+    raise ValueError("No se pudo leer el archivo CSV de ventas.")
 
-def read_excel_flexible(uploaded_file):
-    name = uploaded_file.name.lower()
-    if name.endswith(".xls"):
-        raise ValueError(
-            "El archivo de existencias está en formato .xls antiguo. "
-            "Expórtelo como .xlsx antes de cargarlo."
+
+def detect_header_and_read_excel(uploaded):
+    raw = uploaded.getvalue()
+    extension = Path(uploaded.name).suffix.lower()
+    engine = "xlrd" if extension == ".xls" else "openpyxl"
+
+    book = pd.ExcelFile(io.BytesIO(raw), engine=engine)
+    best = None
+
+    for sheet in book.sheet_names:
+        preview = pd.read_excel(
+            io.BytesIO(raw),
+            sheet_name=sheet,
+            header=None,
+            nrows=20,
+            dtype=str,
+            engine=engine,
         )
-    return pd.read_excel(io.BytesIO(uploaded_file.getvalue()), dtype=str)
+
+        for header_row in range(min(15, len(preview))):
+            values = [normalize_header(v) for v in preview.iloc[header_row].tolist()]
+            score = 0
+            for logical in ("codigo", "tienda", "existencia"):
+                alias_set = {normalize_header(a) for a in ALIASES[logical]}
+                if any(v in alias_set for v in values):
+                    score += 1
+
+            if best is None or score > best["score"]:
+                best = {
+                    "sheet": sheet,
+                    "header_row": header_row,
+                    "score": score,
+                }
+
+    if not best or best["score"] < 2:
+        raise ValueError(
+            "No se identificó una hoja con columnas de código, tienda y existencia."
+        )
+
+    return pd.read_excel(
+        io.BytesIO(raw),
+        sheet_name=best["sheet"],
+        header=best["header_row"],
+        dtype=str,
+        engine=engine,
+    )
+
+
+def build_dates(df):
+    date_col = find_column(df, "fecha")
+    if date_col:
+        dates = pd.to_datetime(df[date_col], errors="coerce", dayfirst=True)
+        if dates.notna().any():
+            return dates
+
+    day_col = find_column(df, "dia")
+    month_col = find_column(df, "mes")
+    year_col = find_column(df, "anno")
+    if day_col and month_col and year_col:
+        values = (
+            df[year_col].astype(str).str.strip()
+            + "-"
+            + df[month_col].astype(str).str.strip()
+            + "-"
+            + df[day_col].astype(str).str.strip()
+        )
+        return pd.to_datetime(values, errors="coerce")
+
+    return pd.Series(pd.NaT, index=df.index)
+
 
 def prepare_sales(df):
-    codigo = find_column(df, "codigo", True)
-    tienda = find_column(df, "tienda", False)
-    nombre = find_column(df, "nombre", False)
-    categoria = find_column(df, "categoria", False)
-    linea = find_column(df, "linea", False)
-    monto_venta = find_column(df, "monto_venta", True)
-    monto_dev = find_column(df, "monto_devolucion", False)
-    monto_anu = find_column(df, "monto_anulacion", False)
-    cant_venta = find_column(df, "cantidad_venta", False)
-    cant_dev = find_column(df, "cantidad_devolucion", False)
-    cant_anu = find_column(df, "cantidad_anulacion", False)
+    codigo_col = find_column(df, "codigo", True)
+    tienda_col = find_column(df, "tienda")
+    nombre_col = find_column(df, "nombre")
+    categoria_col = find_column(df, "categoria")
+    linea_col = find_column(df, "linea")
+    venta_col = find_column(df, "monto_venta", True)
+    devolucion_col = find_column(df, "monto_devolucion")
+    anulacion_col = find_column(df, "monto_anulacion")
+    cant_venta_col = find_column(df, "cantidad_venta")
+    cant_dev_col = find_column(df, "cantidad_devolucion")
+    cant_anu_col = find_column(df, "cantidad_anulacion")
 
-    out = pd.DataFrame()
-    out["codigo"] = normalize_code(df[codigo])
-    out["tienda"] = normalize_code(df[tienda]) if tienda else ""
-    out["nombre"] = df[nombre].astype(str).str.strip() if nombre else ""
-    out["categoria"] = df[categoria].astype(str).str.strip() if categoria else ""
-    out["linea"] = df[linea].astype(str).str.strip() if linea else ""
-    out["venta_bruta"] = parse_number(df[monto_venta])
-    out["devolucion"] = parse_number(df[monto_dev]) if monto_dev else 0.0
-    out["anulacion"] = parse_number(df[monto_anu]) if monto_anu else 0.0
-    # En el archivo fuente, devoluciones y anulaciones ya vienen con signo negativo.
-    # Por eso deben sumarse a la venta, no restarse.
-    out["venta_neta"] = out["venta_bruta"] + out["devolucion"] + out["anulacion"]
-    out["unidades_venta"] = parse_number(df[cant_venta]) if cant_venta else 0.0
-    out["unidades_devolucion"] = parse_number(df[cant_dev]) if cant_dev else 0.0
-    out["unidades_anulacion"] = parse_number(df[cant_anu]) if cant_anu else 0.0
-    out["unidades_netas"] = (
-        out["unidades_venta"] - out["unidades_devolucion"] - out["unidades_anulacion"]
+    out = pd.DataFrame(index=df.index)
+    out["codigo"] = clean_code(df[codigo_col])
+    out["tienda"] = clean_store(df[tienda_col]) if tienda_col else ""
+    out["nombre"] = df[nombre_col].astype(str).str.strip() if nombre_col else ""
+    out["categoria"] = (
+        df[categoria_col].astype(str).str.strip() if categoria_col else ""
     )
-    return out[out["codigo"] != ""]
+    out["linea"] = df[linea_col].astype(str).str.strip() if linea_col else ""
+    out["fecha"] = build_dates(df)
 
-def prepare_inventory(df, ignore_negatives=True):
-    codigo = find_column(df, "codigo", True)
-    tienda = find_column(df, "tienda", True)
-    existencia = find_column(df, "existencia", True)
-    nombre = find_column(df, "nombre", False)
+    out["venta"] = parse_number(df[venta_col])
+    out["devolucion"] = (
+        parse_number(df[devolucion_col]) if devolucion_col else 0.0
+    )
+    out["anulacion"] = (
+        parse_number(df[anulacion_col]) if anulacion_col else 0.0
+    )
 
-    out = pd.DataFrame()
-    out["codigo"] = normalize_code(df[codigo])
-    out["tienda"] = normalize_code(df[tienda])
-    out["existencia"] = parse_number(df[existencia])
-    out["nombre_inventario"] = df[nombre].astype(str).str.strip() if nombre else ""
-    if ignore_negatives:
+    # El archivo fuente ya trae devoluciones y anulaciones con signo negativo.
+    out["venta_neta"] = out["venta"] + out["devolucion"] + out["anulacion"]
+
+    out["unidades_venta"] = (
+        parse_number(df[cant_venta_col]) if cant_venta_col else 0.0
+    )
+    out["unidades_devolucion"] = (
+        parse_number(df[cant_dev_col]) if cant_dev_col else 0.0
+    )
+    out["unidades_anulacion"] = (
+        parse_number(df[cant_anu_col]) if cant_anu_col else 0.0
+    )
+    out["unidades_netas"] = (
+        out["unidades_venta"]
+        + out["unidades_devolucion"]
+        + out["unidades_anulacion"]
+    )
+
+    out = out[out["codigo"].ne("")]
+    out = out[out["codigo"].str.lower().ne("nan")]
+    return out.reset_index(drop=True)
+
+
+def prepare_inventory(df, exclude_negatives=True):
+    codigo_col = find_column(df, "codigo", True)
+    tienda_col = find_column(df, "tienda", True)
+    existencia_col = find_column(df, "existencia", True)
+    nombre_col = find_column(df, "nombre")
+
+    out = pd.DataFrame(index=df.index)
+    out["codigo"] = clean_code(df[codigo_col])
+    out["tienda"] = clean_store(df[tienda_col])
+    out["existencia"] = parse_number(df[existencia_col])
+    out["nombre_inventario"] = (
+        df[nombre_col].astype(str).str.strip() if nombre_col else ""
+    )
+
+    out = out[out["codigo"].ne("")]
+    out = out[out["codigo"].str.lower().ne("nan")]
+    if exclude_negatives:
         out = out[out["existencia"] >= 0]
-    return out[out["codigo"] != ""]
 
-def get_conn():
+    return out.reset_index(drop=True)
+
+
+def connection():
     conn = sqlite3.connect(DB_PATH)
-    conn.execute("""
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS metadata (
             key TEXT PRIMARY KEY,
             value TEXT
         )
-    """)
+        """
+    )
     return conn
 
-def save_data(sales, inventory, sales_name, inventory_name):
-    conn = get_conn()
+
+def table_exists(name):
+    conn = connection()
+    result = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (name,),
+    ).fetchone()
+    conn.close()
+    return result is not None
+
+
+def save_database(sales, inventory, sales_name, inventory_name):
+    conn = connection()
     sales.to_sql("sales", conn, if_exists="replace", index=False)
     inventory.to_sql("inventory", conn, if_exists="replace", index=False)
+
+    valid_dates = sales["fecha"].dropna()
     metadata = {
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
+        "updated_at": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "sales_file": sales_name,
         "inventory_file": inventory_name,
         "sales_rows": str(len(sales)),
         "inventory_rows": str(len(inventory)),
+        "date_min": valid_dates.min().strftime("%d/%m/%Y") if len(valid_dates) else "No detectada",
+        "date_max": valid_dates.max().strftime("%d/%m/%Y") if len(valid_dates) else "No detectada",
+        "days": str(valid_dates.dt.normalize().nunique()) if len(valid_dates) else "0",
+        "total_sales": str(float(sales["venta_neta"].sum())),
     }
+
     for key, value in metadata.items():
         conn.execute(
             "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
             (key, value),
         )
+
     conn.commit()
     conn.close()
 
-def load_metadata():
-    conn = get_conn()
+
+def get_metadata():
+    conn = connection()
     rows = conn.execute("SELECT key, value FROM metadata").fetchall()
     conn.close()
     return dict(rows)
 
-def table_exists(name):
-    conn = get_conn()
-    row = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,)
-    ).fetchone()
-    conn.close()
-    return row is not None
 
-def load_tables():
-    conn = get_conn()
+@st.cache_data(show_spinner=False)
+def load_database(updated_at):
+    conn = connection()
     sales = pd.read_sql_query("SELECT * FROM sales", conn)
     inventory = pd.read_sql_query("SELECT * FROM inventory", conn)
     conn.close()
+    sales["fecha"] = pd.to_datetime(sales["fecha"], errors="coerce")
     return sales, inventory
 
-def query_codes(codes, sales, inventory):
-    selected_sales = sales[sales["codigo"].isin(codes)].copy()
-    selected_inv = inventory[inventory["codigo"].isin(codes)].copy()
 
+def first_nonempty(series):
+    for value in series:
+        value = str(value).strip()
+        if value and value.lower() not in {"nan", "none"}:
+            return value
+    return ""
+
+
+def calculate_results(codes, sales, inventory):
     total_sales = float(sales["venta_neta"].sum())
+
+    sales_selected = sales[sales["codigo"].isin(codes)].copy()
+    inventory_selected = inventory[inventory["codigo"].isin(codes)].copy()
+
     sales_summary = (
-        selected_sales.groupby("codigo", as_index=False)
+        sales_selected.groupby("codigo", as_index=False)
         .agg(
-            nombre=("nombre", lambda x: next((v for v in x if str(v).strip()), "")),
-            categoria=("categoria", lambda x: next((v for v in x if str(v).strip()), "")),
-            linea=("linea", lambda x: next((v for v in x if str(v).strip()), "")),
+            nombre=("nombre", first_nonempty),
+            categoria=("categoria", first_nonempty),
+            linea=("linea", first_nonempty),
             venta_neta=("venta_neta", "sum"),
             unidades_netas=("unidades_netas", "sum"),
         )
     )
-    inv_summary = (
-        selected_inv.groupby("codigo", as_index=False)
+
+    inventory_summary = (
+        inventory_selected.groupby("codigo", as_index=False)
         .agg(
             existencia_total=("existencia", "sum"),
-            tiendas_sin_existencia=("existencia", lambda x: int((x == 0).sum())),
-            tiendas_con_una_unidad=("existencia", lambda x: int((x == 1).sum())),
+            tiendas_en_0=("existencia", lambda x: int((x == 0).sum())),
+            tiendas_en_1=("existencia", lambda x: int((x == 1).sum())),
+            tiendas_con_existencia=("existencia", lambda x: int((x > 0).sum())),
         )
     )
 
-    summary = pd.DataFrame({"codigo": codes})
-    summary = summary.merge(sales_summary, on="codigo", how="left")
-    summary = summary.merge(inv_summary, on="codigo", how="left")
-    summary["venta_neta"] = summary["venta_neta"].fillna(0.0)
-    summary["unidades_netas"] = summary["unidades_netas"].fillna(0.0)
-    summary["existencia_total"] = summary["existencia_total"].fillna(0.0)
-    summary["tiendas_sin_existencia"] = summary["tiendas_sin_existencia"].fillna(0).astype(int)
-    summary["tiendas_con_una_unidad"] = summary["tiendas_con_una_unidad"].fillna(0).astype(int)
-    summary["porcentaje_venta_total"] = (
-        summary["venta_neta"] / total_sales * 100 if total_sales else 0.0
+    result = pd.DataFrame({"codigo": codes})
+    result = result.merge(sales_summary, on="codigo", how="left")
+    result = result.merge(inventory_summary, on="codigo", how="left")
+
+    numeric_cols = [
+        "venta_neta", "unidades_netas", "existencia_total",
+        "tiendas_en_0", "tiendas_en_1", "tiendas_con_existencia"
+    ]
+    for col in numeric_cols:
+        result[col] = result[col].fillna(0)
+
+    for col in ("nombre", "categoria", "linea"):
+        result[col] = result[col].fillna("")
+
+    result["porcentaje_venta_total"] = (
+        result["venta_neta"] / total_sales * 100 if total_sales else 0
     )
-    summary["estado"] = summary.apply(
-        lambda r: "Sin datos"
-        if r["venta_neta"] == 0 and r["existencia_total"] == 0
-        else ("Agotado" if r["existencia_total"] == 0 else "Disponible"),
+
+    result["estado"] = result.apply(
+        lambda row: (
+            "Sin registros"
+            if row["venta_neta"] == 0 and row["existencia_total"] == 0
+            else "Agotado"
+            if row["existencia_total"] == 0
+            else "Disponible"
+        ),
         axis=1,
     )
 
     detail = (
-        selected_inv.groupby(["codigo", "tienda"], as_index=False)["existencia"].sum()
+        inventory_selected.groupby(["codigo", "tienda"], as_index=False)
+        .agg(existencia=("existencia", "sum"))
         .sort_values(["codigo", "tienda"])
     )
-    return summary, detail, total_sales
 
-def csv_download(df):
+    return result, detail, total_sales
+
+
+def to_csv_bytes(df):
     return df.to_csv(index=False).encode("utf-8-sig")
 
-st.title(APP_TITLE)
 
-metadata = load_metadata()
+metadata = get_metadata()
+
+st.title(APP_NAME)
+
 if metadata:
     st.caption(
-        f"Última actualización: {metadata.get('updated_at', '—')} · "
-        f"Ventas: {metadata.get('sales_file', '—')} · "
-        f"Existencias: {metadata.get('inventory_file', '—')}"
+        f"Datos actualizados: {metadata.get('updated_at', '—')} · "
+        f"Período: {metadata.get('date_min', '—')} al "
+        f"{metadata.get('date_max', '—')} · "
+        f"{metadata.get('days', '0')} días"
     )
 else:
-    st.warning("Todavía no se han cargado datos.")
+    st.warning("Aún no se han publicado datos.")
 
-tab_query, tab_admin = st.tabs(["Consulta", "Administración"])
+query_tab, admin_tab = st.tabs(["Consulta", "Administración"])
 
-with tab_query:
+with query_tab:
     if not (table_exists("sales") and table_exists("inventory")):
-        st.info("Un administrador debe cargar primero los archivos diarios.")
+        st.info("Primero debe publicarse la información desde Administración.")
     else:
-        sales, inventory = load_tables()
+        sales, inventory = load_database(metadata.get("updated_at", ""))
 
-        with st.form("consulta_form", clear_on_submit=False):
+        with st.form("query_form", clear_on_submit=False):
             query_text = st.text_input(
-                "Ingrese uno o varios códigos",
-                placeholder="Ejemplo: 3027003 o 3027003, 3027004, 3027005",
-                help="Escriba o pegue los códigos separados por espacio, coma o punto y coma. Presione Enter para consultar.",
+                "Código o códigos",
+                placeholder="Escriba un código y presione Enter",
+                help="Para varios códigos, sepárelos con coma, espacio o punto y coma.",
             )
             submitted = st.form_submit_button("Consultar", type="primary")
 
-        codes = []
-        for token in re.split(r"[\s,;]+", query_text.strip()):
-            token = re.sub(r"\.0$", "", token.strip()).upper()
-            if token and token not in codes:
-                codes.append(token)
-
         if submitted:
+            codes = []
+            for token in re.split(r"[\s,;]+", query_text.strip()):
+                token = re.sub(r"\.0$", "", token.strip()).upper()
+                if token and token not in codes:
+                    codes.append(token)
+
             if not codes:
                 st.warning("Ingrese al menos un código.")
             else:
-                summary, detail, total_sales = query_codes(codes, sales, inventory)
-                st.session_state["summary"] = summary
+                result, detail, total_sales = calculate_results(
+                    codes, sales, inventory
+                )
+                st.session_state["result"] = result
                 st.session_state["detail"] = detail
                 st.session_state["total_sales"] = total_sales
 
-        if "summary" in st.session_state:
-            summary = st.session_state["summary"].copy()
-            detail = st.session_state["detail"].copy()
+        if "result" in st.session_state:
+            result = st.session_state["result"]
+            detail = st.session_state["detail"]
             total_sales = st.session_state["total_sales"]
 
-            if len(summary) == 1:
-                row = summary.iloc[0]
-                product_name = row.get("nombre", "") or "Producto sin descripción"
-                st.subheader(f"{row['codigo']} · {product_name}")
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Existencia total", f"{row['existencia_total']:,.0f}")
-                m2.metric("% de la venta total", f"{row['porcentaje_venta_total']:.4f} %")
-                m3.metric("Venta neta del código", f"Q {row['venta_neta']:,.2f}")
-                m4.metric("Unidades netas", f"{row['unidades_netas']:,.0f}")
-                st.caption(
-                    f"Venta total utilizada como base: Q {total_sales:,.2f} · "
-                    f"Estado: {row['estado']} · "
-                    f"Tiendas en 0: {row['tiendas_sin_existencia']} · "
-                    f"Tiendas en 1: {row['tiendas_con_una_unidad']}"
-                )
-            else:
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Existencia combinada", f"{summary['existencia_total'].sum():,.0f}")
-                m2.metric("Venta neta consultada", f"Q {summary['venta_neta'].sum():,.2f}")
-                pct = (summary['venta_neta'].sum() / total_sales * 100) if total_sales else 0
-                m3.metric("% conjunto de la venta", f"{pct:.4f} %")
-                st.caption(
-                    f"{len(summary)} códigos consultados · Venta total utilizada como base: Q {total_sales:,.2f}"
+            if len(result) == 1:
+                row = result.iloc[0]
+
+                st.subheader(
+                    f"{row['codigo']} — {row['nombre'] or 'Producto sin descripción'}"
                 )
 
-            display = summary.rename(columns={
-                "codigo": "Código",
-                "nombre": "Producto",
-                "categoria": "Categoría",
-                "linea": "Línea",
-                "venta_neta": "Venta neta",
-                "unidades_netas": "Unidades netas",
-                "existencia_total": "Existencia total",
-                "tiendas_sin_existencia": "Tiendas en 0",
-                "tiendas_con_una_unidad": "Tiendas en 1",
-                "porcentaje_venta_total": "% venta total",
-                "estado": "Estado",
-            })
+                main_1, main_2 = st.columns(2)
+                main_1.metric(
+                    "Existencia total",
+                    f"{row['existencia_total']:,.0f}",
+                )
+                main_2.metric(
+                    "% de la venta total",
+                    f"{row['porcentaje_venta_total']:.4f}%",
+                )
+
+                sec_1, sec_2, sec_3, sec_4 = st.columns(4)
+                sec_1.metric("Venta neta del código", f"Q {row['venta_neta']:,.2f}")
+                sec_2.metric("Unidades netas", f"{row['unidades_netas']:,.0f}")
+                sec_3.metric("Tiendas en 0", f"{int(row['tiendas_en_0'])}")
+                sec_4.metric("Tiendas en 1", f"{int(row['tiendas_en_1'])}")
+
+                st.markdown(
+                    f'<div class="small-reference">'
+                    f'Venta neta total del archivo: Q {total_sales:,.2f} · '
+                    f'Estado: {row["estado"]} · '
+                    f'Categoría: {row["categoria"] or "—"} · '
+                    f'Línea: {row["linea"] or "—"}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.subheader("Resumen de códigos consultados")
+
+            display = result.rename(
+                columns={
+                    "codigo": "Código",
+                    "nombre": "Producto",
+                    "categoria": "Categoría",
+                    "linea": "Línea",
+                    "existencia_total": "Existencia total",
+                    "porcentaje_venta_total": "% venta total",
+                    "venta_neta": "Venta neta",
+                    "unidades_netas": "Unidades netas",
+                    "tiendas_en_0": "Tiendas en 0",
+                    "tiendas_en_1": "Tiendas en 1",
+                    "tiendas_con_existencia": "Tiendas con existencia",
+                    "estado": "Estado",
+                }
+            )
+
+            columns = [
+                "Código", "Producto", "Existencia total", "% venta total",
+                "Venta neta", "Unidades netas", "Tiendas en 0",
+                "Tiendas en 1", "Estado"
+            ]
+
             st.dataframe(
-                display,
+                display[columns],
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "Venta neta": st.column_config.NumberColumn(format="Q %.2f"),
-                    "% venta total": st.column_config.NumberColumn(format="%.4f %%"),
                     "Existencia total": st.column_config.NumberColumn(format="%.0f"),
+                    "% venta total": st.column_config.NumberColumn(format="%.4f %%"),
+                    "Venta neta": st.column_config.NumberColumn(format="Q %.2f"),
+                    "Unidades netas": st.column_config.NumberColumn(format="%.0f"),
                 },
             )
+
             st.download_button(
-                "Descargar resumen CSV",
-                csv_download(display),
-                "resultado_consulta.csv",
-                "text/csv",
+                "Descargar resumen",
+                data=to_csv_bytes(display),
+                file_name="consulta_codigos.csv",
+                mime="text/csv",
             )
 
             st.subheader("Existencia por tienda")
             if detail.empty:
-                st.info("No hay detalle de existencias para los códigos consultados.")
+                st.info("No hay registros de existencia para los códigos consultados.")
             else:
                 pivot = detail.pivot_table(
-                    index="codigo", columns="tienda", values="existencia",
-                    aggfunc="sum", fill_value=0
+                    index="codigo",
+                    columns="tienda",
+                    values="existencia",
+                    aggfunc="sum",
+                    fill_value=0,
                 ).reset_index()
-                st.dataframe(pivot, use_container_width=True, hide_index=True)
-                st.download_button(
-                    "Descargar detalle CSV",
-                    csv_download(detail),
-                    "existencia_por_tienda.csv",
-                    "text/csv",
+
+                st.dataframe(
+                    pivot,
+                    use_container_width=True,
+                    hide_index=True,
                 )
 
-with tab_admin:
-    st.subheader("Actualización diaria")
+                st.download_button(
+                    "Descargar existencia por tienda",
+                    data=to_csv_bytes(detail),
+                    file_name="existencia_por_tienda.csv",
+                    mime="text/csv",
+                )
+
+with admin_tab:
+    st.subheader("Publicación diaria")
+
     password = st.text_input("Clave de administrador", type="password")
+
     if password:
         if password != ADMIN_PASSWORD:
             st.error("Clave incorrecta.")
         else:
             st.success("Acceso autorizado.")
+
             sales_file = st.file_uploader(
-                "Archivo de ventas (.csv)", type=["csv"], key="sales_upload"
+                "Archivo de ventas",
+                type=["csv"],
+                help="Archivo CSV generado por el reporte de movimiento de ventas.",
             )
             inventory_file = st.file_uploader(
-                "Archivo de existencias (.xlsx)", type=["xlsx", "xls"], key="inventory_upload"
+                "Archivo de existencias",
+                type=["xls", "xlsx"],
+                help="Se aceptan archivos Excel .xls y .xlsx.",
             )
-            ignore_negatives = st.checkbox(
-                "Excluir existencias negativas", value=True
+            exclude_negatives = st.checkbox(
+                "Excluir existencias negativas",
+                value=True,
             )
 
-            if st.button(
-                "Validar y publicar datos",
-                type="primary",
-                disabled=not (sales_file and inventory_file),
-            ):
+            if sales_file and inventory_file:
                 try:
-                    raw_sales = read_csv_flexible(sales_file)
-                    raw_inventory = read_excel_flexible(inventory_file)
-                    sales_data = prepare_sales(raw_sales)
-                    inventory_data = prepare_inventory(raw_inventory, ignore_negatives)
-
-                    if sales_data.empty:
-                        raise ValueError("El archivo de ventas no contiene registros válidos.")
-                    if inventory_data.empty:
-                        raise ValueError("El archivo de existencias no contiene registros válidos.")
-
-                    save_data(
-                        sales_data,
-                        inventory_data,
-                        sales_file.name,
-                        inventory_file.name,
+                    raw_sales = read_csv_file(sales_file)
+                    raw_inventory = detect_header_and_read_excel(inventory_file)
+                    sales_ready = prepare_sales(raw_sales)
+                    inventory_ready = prepare_inventory(
+                        raw_inventory,
+                        exclude_negatives=exclude_negatives,
                     )
-                    st.success(
-                        f"Datos publicados: {len(sales_data):,} registros de ventas y "
-                        f"{len(inventory_data):,} registros de existencias."
+
+                    valid_dates = sales_ready["fecha"].dropna()
+                    total_sales_preview = float(sales_ready["venta_neta"].sum())
+
+                    st.markdown("#### Validación previa")
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("Registros de ventas", f"{len(sales_ready):,}")
+                    col2.metric("Registros de existencias", f"{len(inventory_ready):,}")
+                    col3.metric("Venta neta total", f"Q {total_sales_preview:,.2f}")
+                    col4.metric(
+                        "Días detectados",
+                        f"{valid_dates.dt.normalize().nunique() if len(valid_dates) else 0}",
                     )
-                    st.rerun()
+
+                    if len(valid_dates):
+                        st.caption(
+                            f"Período detectado: "
+                            f"{valid_dates.min().strftime('%d/%m/%Y')} al "
+                            f"{valid_dates.max().strftime('%d/%m/%Y')}"
+                        )
+
+                    with st.expander("Ver comprobación de importes"):
+                        checks = pd.DataFrame(
+                            {
+                                "Concepto": [
+                                    "Ventas",
+                                    "Devoluciones",
+                                    "Anulaciones",
+                                    "Venta neta",
+                                ],
+                                "Monto": [
+                                    sales_ready["venta"].sum(),
+                                    sales_ready["devolucion"].sum(),
+                                    sales_ready["anulacion"].sum(),
+                                    sales_ready["venta_neta"].sum(),
+                                ],
+                            }
+                        )
+                        st.dataframe(
+                            checks,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Monto": st.column_config.NumberColumn(format="Q %.2f")
+                            },
+                        )
+                        st.caption(
+                            "Venta neta = ventas + devoluciones + anulaciones. "
+                            "El reporte ya trae devoluciones y anulaciones con signo negativo."
+                        )
+
+                    if st.button("Publicar datos", type="primary"):
+                        if sales_ready.empty:
+                            st.error("El archivo de ventas quedó sin registros válidos.")
+                        elif inventory_ready.empty:
+                            st.error(
+                                "El archivo de existencias quedó sin registros válidos."
+                            )
+                        else:
+                            save_database(
+                                sales_ready,
+                                inventory_ready,
+                                sales_file.name,
+                                inventory_file.name,
+                            )
+                            st.cache_data.clear()
+                            for key in ("result", "detail", "total_sales"):
+                                st.session_state.pop(key, None)
+                            st.success("Datos publicados correctamente.")
+                            st.rerun()
+
                 except Exception as exc:
-                    st.error(f"No se publicaron los datos: {exc}")
-
-            with st.expander("Columnas reconocidas"):
-                st.write(
-                    "Ventas: CODIGO, TIENDA, MONTO_VENTA, MONTO_DEVOLUCION, "
-                    "MONTO_ANULACION, CANTIDAD_VENTA_UNIDADES, NOMBRE, CATEGORIA y LINEA."
-                )
-                st.write(
-                    "Existencias: CODAMA o CODIGO, TIENAT o TIENDA y EXIST o EXISTENCIA."
-                )
+                    st.error(f"No se pudo validar la carga: {exc}")
+            else:
+                st.info("Seleccione los dos archivos para validar la información.")
