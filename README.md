@@ -1,4 +1,3 @@
-
 # Consulta de Inventario y Participación de Venta
 
 Versión reconstruida desde cero.
