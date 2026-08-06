@@ -1,3 +1,4 @@
+
 import os
 import io
 import re
@@ -130,7 +131,9 @@ def prepare_sales(df):
     out["venta_bruta"] = parse_number(df[monto_venta])
     out["devolucion"] = parse_number(df[monto_dev]) if monto_dev else 0.0
     out["anulacion"] = parse_number(df[monto_anu]) if monto_anu else 0.0
-    out["venta_neta"] = out["venta_bruta"] - out["devolucion"] - out["anulacion"]
+    # En el archivo fuente, devoluciones y anulaciones ya vienen con signo negativo.
+    # Por eso deben sumarse a la venta, no restarse.
+    out["venta_neta"] = out["venta_bruta"] + out["devolucion"] + out["anulacion"]
     out["unidades_venta"] = parse_number(df[cant_venta]) if cant_venta else 0.0
     out["unidades_devolucion"] = parse_number(df[cant_dev]) if cant_dev else 0.0
     out["unidades_anulacion"] = parse_number(df[cant_anu]) if cant_anu else 0.0
