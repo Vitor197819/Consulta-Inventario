@@ -1,84 +1,42 @@
 
-# Consulta de Existencias y Ventas
+# Consulta de Inventario y Participación de Venta
 
-Aplicación web compartida para cargar diariamente un archivo de ventas y un archivo de existencias, y consultar por código:
+Versión reconstruida desde cero.
 
-- existencia total;
-- existencia por tienda;
-- venta neta;
-- unidades netas;
-- porcentaje sobre la venta total;
-- tiendas con existencia 0 o 1.
+## Funciones
 
-## Formato de archivos
+- Carga diaria de ventas en CSV.
+- Carga directa de existencias en `.xls` o `.xlsx`.
+- Validación previa antes de publicar.
+- Vista del período y cantidad de días.
+- Cálculo correcto de venta neta:
+  `venta + devolución + anulación`.
+- Consulta con Enter.
+- Existencia total y por tienda.
+- Participación porcentual sobre la venta neta total.
+- Descarga de resultados.
+- Acceso administrativo mediante contraseña.
 
-### Ventas
-CSV con las columnas principales:
+## Archivos del proyecto
 
-- `CODIGO`
-- `TIENDA`
-- `MONTO_VENTA`
+- `app.py`
+- `requirements.txt`
+- `Dockerfile`
+- `render.yaml`
 
-Opcionales:
+## Actualizar en GitHub
 
-- `MONTO_DEVOLUCION`
-- `MONTO_ANULACION`
-- `CANTIDAD_VENTA_UNIDADES`
-- `CANTIDAD_DEVOLUCION_UNIDADES`
-- `CANTIDAD_ANULACION_UNIDADES`
-- `NOMBRE`
-- `CATEGORIA`
-- `LINEA`
+Lo más seguro es reemplazar todos los archivos anteriores por los incluidos en este paquete.
 
-### Existencias
-Debe exportarse como `.xlsx`.
+## Render
 
-Columnas reconocidas:
-
-- código: `CODAMA` o `CODIGO`
-- tienda: `TIENAT` o `TIENDA`
-- existencia: `EXIST` o `EXISTENCIA`
-
-El formato `.xls` antiguo se rechaza deliberadamente porque suele fallar en servidores modernos.
-
-## Ejecución local
-
-```bash
-pip install -r requirements.txt
-set ADMIN_PASSWORD=una-clave-segura
-streamlit run app.py
-```
-
-En macOS/Linux:
-
-```bash
-export ADMIN_PASSWORD="una-clave-segura"
-streamlit run app.py
-```
-
-Abrir: `http://localhost:8501`
-
-## Publicación con Docker
-
-```bash
-docker build -t consulta-inventario .
-docker run -p 8501:8501 \
-  -e ADMIN_PASSWORD="una-clave-segura" \
-  -v consulta_datos:/app/data \
-  consulta-inventario
-```
-
-La aplicación quedará disponible en el puerto 8501. Para acceso externo se debe publicar detrás de HTTPS o usar un proveedor como Render, Railway, Azure, AWS o un servidor interno.
+1. Render debe usar `Runtime: Docker`.
+2. Crear la variable:
+   - `ADMIN_PASSWORD`: contraseña elegida.
+3. Desplegar el último commit.
+4. Entrar a Administración, validar los archivos y pulsar `Publicar datos`.
 
 ## Persistencia
 
-Los datos se almacenan en SQLite dentro de la carpeta indicada por `DATA_DIR`.
-
-En un servicio de alojamiento, se debe conectar un disco persistente a `/app/data`. Sin disco persistente, los datos pueden perderse al reiniciar el servicio.
-
-## Seguridad mínima
-
-- Cambiar siempre `ADMIN_PASSWORD`.
-- Usar HTTPS.
-- No publicar el puerto directamente a internet sin autenticación de red.
-- Para usuarios individualizados y permisos por tienda se requiere una segunda fase con autenticación completa.
+En el plan gratuito, Render puede reiniciar el contenedor y perder la base local.
+Para uso permanente se recomienda un disco persistente o una base externa.
