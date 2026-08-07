@@ -2,18 +2,33 @@
 import io
 import os
 import re
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from sqlalchemy import create_engine, inspect, text as sql_text
+from sqlalchemy.pool import NullPool
 
 APP_NAME = "Consulta de Inventario y Participación de Venta"
 DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "inventario.db"
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Cambiar123")
+
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+if DATABASE_URL:
+    DB_URL = DATABASE_URL
+else:
+    DB_URL = f"sqlite:///{DB_PATH}"
+
+@st.cache_resource
+def get_engine():
+    # NullPool avoids stale connections when Render restarts instances.
+    return create_engine(DB_URL, pool_pre_ping=True, poolclass=NullPool)
 
 st.set_page_config(
     page_title=APP_NAME,
@@ -25,14 +40,277 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .block-container {padding-top: 1.4rem; max-width: 1450px;}
-    [data-testid="stMetricValue"] {font-size: 2.3rem;}
-    div[data-testid="stForm"] {border: 0; padding: 0;}
-    .small-reference {
-        color: #6b7280;
-        font-size: 0.9rem;
-        margin-top: -0.4rem;
-        margin-bottom: 1rem;
+    :root {
+        --app-blue: #0b2f5b;
+        --app-blue-2: #1268dc;
+        --app-green: #079455;
+        --app-red: #d92d20;
+        --app-muted: #667085;
+        --app-border: #e4e7ec;
+        --app-bg: #f8fafc;
+    }
+
+    html, body, [class*="css"] {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    .stApp {
+        background: var(--app-bg);
+    }
+
+    .block-container {
+        max-width: 760px;
+        padding-top: 0.8rem;
+        padding-bottom: 5rem;
+    }
+
+    h1 {
+        font-size: 1.55rem !important;
+        color: var(--app-blue);
+        margin-bottom: 0.3rem !important;
+    }
+
+    h2, h3 {
+        color: #101828;
+    }
+
+    [data-testid="stHeader"] {
+        background: transparent;
+    }
+
+    footer {
+        visibility: hidden;
+    }
+
+    div[data-testid="stForm"] {
+        border: 0;
+        padding: 0;
+    }
+
+    .updated-box {
+        background: #eaf4ff;
+        border: 1px solid #cfe5ff;
+        color: #175cd3;
+        padding: 0.8rem 0.95rem;
+        border-radius: 14px;
+        margin: 0.6rem 0 1rem 0;
+        font-size: 0.92rem;
+        font-weight: 600;
+    }
+
+    .product-card {
+        background: white;
+        border: 1px solid var(--app-border);
+        border-radius: 18px;
+        padding: 1rem;
+        margin-top: 0.75rem;
+        box-shadow: 0 1px 3px rgba(16,24,40,.05);
+    }
+
+    .product-code {
+        font-size: 1.25rem;
+        font-weight: 800;
+        color: #101828;
+    }
+
+    .product-name {
+        font-size: 1rem;
+        font-weight: 650;
+        color: #344054;
+        margin-top: 0.25rem;
+        margin-bottom: 0.7rem;
+    }
+
+    .badge-ok, .badge-zero {
+        display: inline-block;
+        padding: 0.25rem 0.55rem;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 700;
+    }
+
+    .badge-ok {
+        background: #dcfae6;
+        color: #067647;
+    }
+
+    .badge-zero {
+        background: #fee4e2;
+        color: #b42318;
+    }
+
+    .metric-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.7rem;
+        margin: 0.8rem 0;
+    }
+
+    .metric-card {
+        background: white;
+        border: 1px solid var(--app-border);
+        border-radius: 16px;
+        padding: 0.9rem;
+        min-height: 94px;
+    }
+
+    .metric-card.primary-green {
+        background: linear-gradient(180deg, #f0fdf4 0%, #ffffff 100%);
+        border-color: #bbf7d0;
+    }
+
+    .metric-card.primary-blue {
+        background: linear-gradient(180deg, #eff8ff 0%, #ffffff 100%);
+        border-color: #b2ddff;
+    }
+
+    .metric-value {
+        font-size: 1.65rem;
+        line-height: 1.05;
+        font-weight: 800;
+        color: #101828;
+        word-break: break-word;
+    }
+
+    .primary-green .metric-value {
+        color: var(--app-green);
+    }
+
+    .primary-blue .metric-value {
+        color: var(--app-blue-2);
+    }
+
+    .metric-label {
+        margin-top: 0.35rem;
+        color: var(--app-muted);
+        font-size: 0.82rem;
+        font-weight: 600;
+    }
+
+    .store-list {
+        background: white;
+        border: 1px solid var(--app-border);
+        border-radius: 18px;
+        padding: 0.2rem 0.9rem;
+        margin-top: 0.5rem;
+    }
+
+    .store-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.9rem 0.15rem;
+        border-bottom: 1px solid #f0f1f3;
+    }
+
+    .store-row:last-child {
+        border-bottom: 0;
+    }
+
+    .store-name {
+        color: #344054;
+        font-weight: 650;
+    }
+
+    .store-stock-ok {
+        color: var(--app-green);
+        font-weight: 800;
+    }
+
+    .store-stock-zero {
+        color: var(--app-red);
+        font-weight: 800;
+    }
+
+    .reference-box {
+        background: white;
+        border: 1px solid var(--app-border);
+        border-radius: 14px;
+        padding: 0.8rem;
+        color: var(--app-muted);
+        font-size: 0.82rem;
+        margin-top: 0.5rem;
+    }
+
+    .multi-card {
+        background: white;
+        border: 1px solid var(--app-border);
+        border-radius: 14px;
+        padding: 0.85rem;
+        margin-bottom: 0.55rem;
+    }
+
+    .multi-top {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.6rem;
+        font-weight: 750;
+        color: #101828;
+    }
+
+    .multi-sub {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 0.4rem;
+        color: var(--app-muted);
+        font-size: 0.85rem;
+    }
+
+    div.stButton > button,
+    div.stDownloadButton > button,
+    div[data-testid="stFormSubmitButton"] > button {
+        width: 100%;
+        min-height: 48px;
+        border-radius: 12px;
+        font-weight: 700;
+    }
+
+    div[data-baseweb="input"] > div {
+        min-height: 50px;
+        border-radius: 12px;
+    }
+
+    [data-testid="stFileUploaderDropzone"] {
+        border-radius: 14px;
+    }
+
+    [data-testid="stTabs"] [role="tablist"] {
+        gap: 0.35rem;
+    }
+
+    [data-testid="stTabs"] button[role="tab"] {
+        flex: 1;
+        min-height: 44px;
+        font-weight: 700;
+    }
+
+    @media (max-width: 600px) {
+        .block-container {
+            padding-left: 0.8rem;
+            padding-right: 0.8rem;
+            padding-top: 0.45rem;
+        }
+
+        h1 {
+            font-size: 1.3rem !important;
+        }
+
+        .metric-grid {
+            gap: 0.55rem;
+        }
+
+        .metric-card {
+            padding: 0.75rem;
+            min-height: 86px;
+        }
+
+        .metric-value {
+            font-size: 1.45rem;
+        }
+
+        [data-testid="stDataFrame"] {
+            font-size: 0.82rem;
+        }
     }
     </style>
     """,
@@ -311,33 +589,37 @@ def prepare_inventory(df, exclude_negatives=True):
     return out.reset_index(drop=True)
 
 
-def connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS metadata (
-            key TEXT PRIMARY KEY,
-            value TEXT
+def initialize_database():
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            sql_text(
+                """
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key VARCHAR(100) PRIMARY KEY,
+                    value TEXT
+                )
+                """
+            )
         )
-        """
-    )
-    return conn
 
 
 def table_exists(name):
-    conn = connection()
-    result = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (name,),
-    ).fetchone()
-    conn.close()
-    return result is not None
+    initialize_database()
+    return inspect(get_engine()).has_table(name)
 
 
 def save_database(sales, inventory, sales_name, inventory_name):
-    conn = connection()
-    sales.to_sql("sales", conn, if_exists="replace", index=False)
-    inventory.to_sql("inventory", conn, if_exists="replace", index=False)
+    initialize_database()
+    engine = get_engine()
+
+    # Escribimos primero tablas temporales y luego reemplazamos en una transacción.
+    # Esto evita dejar datos a medias si una carga falla.
+    sales_tmp = "sales_upload_tmp"
+    inventory_tmp = "inventory_upload_tmp"
+
+    sales.to_sql(sales_tmp, engine, if_exists="replace", index=False, method="multi", chunksize=1000)
+    inventory.to_sql(inventory_tmp, engine, if_exists="replace", index=False, method="multi", chunksize=1000)
 
     valid_dates = sales["fecha"].dropna()
     metadata = {
@@ -352,29 +634,38 @@ def save_database(sales, inventory, sales_name, inventory_name):
         "total_sales": str(float(sales["venta"].sum())),
     }
 
-    for key, value in metadata.items():
-        conn.execute(
-            "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
-            (key, value),
-        )
+    with engine.begin() as conn:
+        conn.execute(sql_text("DROP TABLE IF EXISTS sales"))
+        conn.execute(sql_text("ALTER TABLE sales_upload_tmp RENAME TO sales"))
+        conn.execute(sql_text("DROP TABLE IF EXISTS inventory"))
+        conn.execute(sql_text("ALTER TABLE inventory_upload_tmp RENAME TO inventory"))
 
-    conn.commit()
-    conn.close()
+        for key, value in metadata.items():
+            conn.execute(
+                sql_text(
+                    """
+                    INSERT INTO metadata(key, value)
+                    VALUES (:key, :value)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                    """
+                ),
+                {"key": key, "value": value},
+            )
 
 
 def get_metadata():
-    conn = connection()
-    rows = conn.execute("SELECT key, value FROM metadata").fetchall()
-    conn.close()
+    initialize_database()
+    engine = get_engine()
+    with engine.connect() as conn:
+        rows = conn.execute(sql_text("SELECT key, value FROM metadata")).fetchall()
     return dict(rows)
 
 
 @st.cache_data(show_spinner=False)
 def load_database(updated_at):
-    conn = connection()
-    sales = pd.read_sql_query("SELECT * FROM sales", conn)
-    inventory = pd.read_sql_query("SELECT * FROM inventory", conn)
-    conn.close()
+    engine = get_engine()
+    sales = pd.read_sql_query(sql_text("SELECT * FROM sales"), engine)
+    inventory = pd.read_sql_query(sql_text("SELECT * FROM inventory"), engine)
     sales["fecha"] = pd.to_datetime(sales["fecha"], errors="coerce")
     return sales, inventory
 
@@ -456,21 +747,26 @@ def to_csv_bytes(df):
     return df.to_csv(index=False).encode("utf-8-sig")
 
 
+
 metadata = get_metadata()
 
-st.title(APP_NAME)
+st.title("📦 Consulta Inventario")
 
 if metadata:
-    st.caption(
-        f"Datos actualizados: {metadata.get('updated_at', '—')} · "
-        f"Período: {metadata.get('date_min', '—')} al "
-        f"{metadata.get('date_max', '—')} · "
-        f"{metadata.get('days', '0')} días"
+    st.markdown(
+        f"""
+        <div class="updated-box">
+            Datos actualizados: {metadata.get('updated_at', '—')}<br>
+            Período: {metadata.get('date_min', '—')} al {metadata.get('date_max', '—')}
+            · {metadata.get('days', '0')} días
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 else:
     st.warning("Aún no se han publicado datos.")
 
-query_tab, admin_tab = st.tabs(["Consulta", "Administración"])
+query_tab, admin_tab = st.tabs(["🔎 Consulta", "⚙️ Administración"])
 
 with query_tab:
     if not (table_exists("sales") and table_exists("inventory")):
@@ -480,11 +776,11 @@ with query_tab:
 
         with st.form("query_form", clear_on_submit=False):
             query_text = st.text_input(
-                "Código o códigos",
-                placeholder="Escriba un código y presione Enter",
-                help="Para varios códigos, sepárelos con coma, espacio o punto y coma.",
+                "Consultar código",
+                placeholder="Escribe un código y presiona Enter",
+                help="También puedes pegar varios códigos separados por coma, espacio o punto y coma.",
             )
-            submitted = st.form_submit_button("Consultar", type="primary")
+            submitted = st.form_submit_button("🔎 Consultar", type="primary")
 
         if submitted:
             codes = []
@@ -494,7 +790,7 @@ with query_tab:
                     codes.append(token)
 
             if not codes:
-                st.warning("Ingrese al menos un código.")
+                st.warning("Ingresa al menos un código.")
             else:
                 result, detail, total_sales = calculate_results(
                     codes, sales, inventory
@@ -510,108 +806,156 @@ with query_tab:
 
             if len(result) == 1:
                 row = result.iloc[0]
-
-                st.subheader(
-                    f"{row['codigo']} — {row['nombre'] or 'Producto sin descripción'}"
-                )
-
-                main_1, main_2 = st.columns(2)
-                main_1.metric(
-                    "Existencia total",
-                    f"{row['existencia_total']:,.0f}",
-                )
-                main_2.metric(
-                    "% de la venta bruta total",
-                    f"{row['porcentaje_venta_total']:.4f}%",
-                )
-
-                sec_1, sec_2, sec_3, sec_4 = st.columns(4)
-                sec_1.metric("Venta neta del código", f"Q {row['venta_neta']:,.2f}")
-                sec_2.metric("Unidades netas", f"{row['unidades_netas']:,.0f}")
-                sec_3.metric("Tiendas en 0", f"{int(row['tiendas_en_0'])}")
-                sec_4.metric("Tiendas en 1", f"{int(row['tiendas_en_1'])}")
+                badge_class = "badge-zero" if row["existencia_total"] == 0 else "badge-ok"
+                badge_text = "Agotado" if row["existencia_total"] == 0 else "Disponible"
 
                 st.markdown(
-                    f'<div class="small-reference">'
-                    f'Venta bruta total usada como base: Q {total_sales:,.2f} · '
-                    f'Estado: {row["estado"]} · '
-                    f'Categoría: {row["categoria"] or "—"} · '
-                    f'Línea: {row["linea"] or "—"}'
-                    f'</div>',
+                    f"""
+                    <div class="product-card">
+                        <div>
+                            <span class="product-code">{row['codigo']}</span>
+                            <span class="{badge_class}" style="float:right">{badge_text}</span>
+                        </div>
+                        <div class="product-name">{row['nombre'] or 'Producto sin descripción'}</div>
+
+                        <div class="metric-grid">
+                            <div class="metric-card primary-green">
+                                <div class="metric-value">{row['existencia_total']:,.0f}</div>
+                                <div class="metric-label">Existencia total</div>
+                            </div>
+                            <div class="metric-card primary-blue">
+                                <div class="metric-value">{row['porcentaje_venta_total']:.4f}%</div>
+                                <div class="metric-label">% participación en venta</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-value" style="font-size:1.25rem">Q {row['venta_neta']:,.2f}</div>
+                                <div class="metric-label">Venta del código</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-value" style="font-size:1.25rem">{row['unidades_netas']:,.0f}</div>
+                                <div class="metric-label">Unidades vendidas</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-value" style="font-size:1.25rem;color:#d92d20">{int(row['tiendas_en_0'])}</div>
+                                <div class="metric-label">Tiendas en 0</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-value" style="font-size:1.25rem;color:#b54708">{int(row['tiendas_en_1'])}</div>
+                                <div class="metric-label">Tiendas en 1</div>
+                            </div>
+                        </div>
+                    </div>
+                    """,
                     unsafe_allow_html=True,
                 )
+
+                st.markdown("### Existencia por tienda")
+                code_detail = detail[detail["codigo"] == row["codigo"]].copy()
+                if code_detail.empty:
+                    st.info("No hay registros de existencia para este código.")
+                else:
+                    rows_html = []
+                    for _, store_row in code_detail.iterrows():
+                        stock = float(store_row["existencia"])
+                        stock_class = "store-stock-zero" if stock <= 0 else "store-stock-ok"
+                        rows_html.append(
+                            f"""
+                            <div class="store-row">
+                                <span class="store-name">Tienda {store_row['tienda']}</span>
+                                <span class="{stock_class}">{stock:,.0f} uds.</span>
+                            </div>
+                            """
+                        )
+                    st.markdown(
+                        '<div class="store-list">' + "".join(rows_html) + "</div>",
+                        unsafe_allow_html=True,
+                    )
+
+                with st.expander("Ver detalles"):
+                    st.markdown(
+                        f"""
+                        <div class="reference-box">
+                            <b>Venta bruta total usada como base:</b> Q {total_sales:,.2f}<br>
+                            <b>Categoría:</b> {row['categoria'] or '—'}<br>
+                            <b>Línea:</b> {row['linea'] or '—'}<br>
+                            <b>Estado:</b> {row['estado']}
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
             else:
-                st.subheader("Resumen de códigos consultados")
+                st.markdown(f"### {len(result)} códigos encontrados")
+                for _, row in result.iterrows():
+                    stock_color = "#d92d20" if row["existencia_total"] <= 0 else "#079455"
+                    st.markdown(
+                        f"""
+                        <div class="multi-card">
+                            <div class="multi-top">
+                                <span>{row['codigo']}</span>
+                                <span style="color:{stock_color}">{row['existencia_total']:,.0f} uds.</span>
+                            </div>
+                            <div style="color:#475467;margin-top:.25rem">{row['nombre'] or 'Sin descripción'}</div>
+                            <div class="multi-sub">
+                                <span>% venta: {row['porcentaje_venta_total']:.4f}%</span>
+                                <span>Q {row['venta_neta']:,.2f}</span>
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
-            display = result.rename(
-                columns={
-                    "codigo": "Código",
-                    "nombre": "Producto",
-                    "categoria": "Categoría",
-                    "linea": "Línea",
-                    "existencia_total": "Existencia total",
-                    "porcentaje_venta_total": "% venta bruta",
-                    "venta_neta": "Venta neta",
-                    "unidades_netas": "Unidades netas",
-                    "tiendas_en_0": "Tiendas en 0",
-                    "tiendas_en_1": "Tiendas en 1",
-                    "tiendas_con_existencia": "Tiendas con existencia",
-                    "estado": "Estado",
-                }
-            )
+                with st.expander("Ver tabla completa"):
+                    display = result.rename(
+                        columns={
+                            "codigo": "Código",
+                            "nombre": "Producto",
+                            "categoria": "Categoría",
+                            "linea": "Línea",
+                            "existencia_total": "Existencia total",
+                            "porcentaje_venta_total": "% venta bruta",
+                            "venta_neta": "Venta neta",
+                            "unidades_netas": "Unidades netas",
+                            "tiendas_en_0": "Tiendas en 0",
+                            "tiendas_en_1": "Tiendas en 1",
+                            "tiendas_con_existencia": "Tiendas con existencia",
+                            "estado": "Estado",
+                        }
+                    )
+                    st.dataframe(
+                        display[
+                            ["Código", "Producto", "Existencia total", "% venta bruta", "Venta neta"]
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                    )
 
-            columns = [
-                "Código", "Producto", "Existencia total", "% venta bruta",
-                "Venta neta", "Unidades netas", "Tiendas en 0",
-                "Tiendas en 1", "Estado"
-            ]
-
-            st.dataframe(
-                display[columns],
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Existencia total": st.column_config.NumberColumn(format="%.0f"),
-                    "% venta bruta": st.column_config.NumberColumn(format="%.4f %%"),
-                    "Venta neta": st.column_config.NumberColumn(format="Q %.2f"),
-                    "Unidades netas": st.column_config.NumberColumn(format="%.0f"),
-                },
-            )
-
-            st.download_button(
-                "Descargar resumen",
-                data=to_csv_bytes(display),
-                file_name="consulta_codigos.csv",
-                mime="text/csv",
-            )
-
-            st.subheader("Existencia por tienda")
-            if detail.empty:
-                st.info("No hay registros de existencia para los códigos consultados.")
-            else:
-                pivot = detail.pivot_table(
-                    index="codigo",
-                    columns="tienda",
-                    values="existencia",
-                    aggfunc="sum",
-                    fill_value=0,
-                ).reset_index()
-
-                st.dataframe(
-                    pivot,
-                    use_container_width=True,
-                    hide_index=True,
+                display_download = result.rename(
+                    columns={
+                        "codigo": "Código",
+                        "nombre": "Producto",
+                        "categoria": "Categoría",
+                        "linea": "Línea",
+                        "existencia_total": "Existencia total",
+                        "porcentaje_venta_total": "% venta bruta",
+                        "venta_neta": "Venta neta",
+                        "unidades_netas": "Unidades netas",
+                        "tiendas_en_0": "Tiendas en 0",
+                        "tiendas_en_1": "Tiendas en 1",
+                        "tiendas_con_existencia": "Tiendas con existencia",
+                        "estado": "Estado",
+                    }
                 )
-
                 st.download_button(
-                    "Descargar existencia por tienda",
-                    data=to_csv_bytes(detail),
-                    file_name="existencia_por_tienda.csv",
+                    "⬇️ Descargar resultados",
+                    data=to_csv_bytes(display_download),
+                    file_name="consulta_codigos.csv",
                     mime="text/csv",
                 )
 
 with admin_tab:
-    st.subheader("Publicación diaria")
+    st.subheader("Actualización de datos")
+    st.caption("Carga los dos archivos. La nueva publicación reemplaza la información anterior y queda guardada en Supabase.")
 
     password = st.text_input("Clave de administrador", type="password")
 
@@ -622,12 +966,12 @@ with admin_tab:
             st.success("Acceso autorizado.")
 
             sales_file = st.file_uploader(
-                "Archivo de ventas",
+                "1. Archivo de ventas (.csv)",
                 type=["csv"],
-                help="Archivo CSV generado por el reporte de movimiento de ventas.",
+                help="Archivo CSV de movimiento de ventas.",
             )
             inventory_file = st.file_uploader(
-                "Archivo de existencias",
+                "2. Archivo de existencias (.xls o .xlsx)",
                 type=["xls", "xlsx"],
                 help="Se aceptan archivos Excel .xls y .xlsx.",
             )
@@ -648,32 +992,35 @@ with admin_tab:
 
                     valid_dates = sales_ready["fecha"].dropna()
                     total_sales_preview = float(sales_ready["venta"].sum())
-
-                    st.markdown("#### Validación previa")
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Registros de ventas", f"{len(sales_ready):,}")
-                    col2.metric("Registros de existencias", f"{len(inventory_ready):,}")
-                    col3.metric("Venta bruta total (base %)", f"Q {total_sales_preview:,.2f}")
-                    col4.metric(
-                        "Días detectados",
-                        f"{valid_dates.dt.normalize().nunique() if len(valid_dates) else 0}",
+                    stores = sorted(
+                        s for s in sales_ready["tienda"].dropna().astype(str).unique()
+                        if s and s.lower() != "nan"
                     )
 
+                    st.markdown("### Validación previa")
+                    c1, c2 = st.columns(2)
+                    c1.metric("Venta bruta base %", f"Q {total_sales_preview:,.2f}")
+                    c2.metric("Días detectados", f"{valid_dates.dt.normalize().nunique() if len(valid_dates) else 0}")
+
+                    c3, c4 = st.columns(2)
+                    c3.metric("Registros ventas", f"{len(sales_ready):,}")
+                    c4.metric("Registros existencias", f"{len(inventory_ready):,}")
+
                     if len(valid_dates):
-                        st.caption(
-                            f"Período detectado: "
-                            f"{valid_dates.min().strftime('%d/%m/%Y')} al "
-                            f"{valid_dates.max().strftime('%d/%m/%Y')}"
+                        st.info(
+                            f"Período: {valid_dates.min().strftime('%d/%m/%Y')} al "
+                            f"{valid_dates.max().strftime('%d/%m/%Y')} · "
+                            f"Tiendas detectadas: {', '.join(stores) if stores else 'No detectadas'}"
                         )
 
-                    with st.expander("Ver comprobación de importes"):
+                    with st.expander("Comprobación de importes"):
                         checks = pd.DataFrame(
                             {
                                 "Concepto": [
-                                    "Ventas",
+                                    "Venta bruta (base %)",
                                     "Devoluciones",
                                     "Anulaciones",
-                                    "Venta neta",
+                                    "Venta neta informativa",
                                 ],
                                 "Monto": [
                                     sales_ready["venta"].sum(),
@@ -691,18 +1038,12 @@ with admin_tab:
                                 "Monto": st.column_config.NumberColumn(format="Q %.2f")
                             },
                         )
-                        st.caption(
-                            "Venta neta = ventas + devoluciones + anulaciones. "
-                            "El reporte ya trae devoluciones y anulaciones con signo negativo."
-                        )
 
-                    if st.button("Publicar datos", type="primary"):
+                    if st.button("✅ Publicar datos", type="primary"):
                         if sales_ready.empty:
-                            st.error("El archivo de ventas quedó sin registros válidos.")
+                            st.error("El archivo de ventas no contiene registros válidos.")
                         elif inventory_ready.empty:
-                            st.error(
-                                "El archivo de existencias quedó sin registros válidos."
-                            )
+                            st.error("El archivo de existencias no contiene registros válidos.")
                         else:
                             save_database(
                                 sales_ready,
@@ -719,4 +1060,5 @@ with admin_tab:
                 except Exception as exc:
                     st.error(f"No se pudo validar la carga: {exc}")
             else:
-                st.info("Seleccione los dos archivos para validar la información.")
+                st.info("Selecciona ambos archivos para validar la información.")
+
