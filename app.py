@@ -870,12 +870,13 @@ with query_tab:
         sales, inventory = load_database(metadata.get("updated_at", ""))
 
         with st.form("query_form", clear_on_submit=False):
-            query_text = st.text_input(
-                "Consultar código",
-                placeholder="Escribe un código y presiona Enter",
-                help="También puedes pegar varios códigos separados por coma, espacio o punto y coma.",
+            query_text = st.text_area(
+                "Códigos a consultar",
+                placeholder="Un código por línea\nEjemplo:\n3027003\n0123456\n1001057",
+                height=150,
+                help="Pega una lista de códigos, preferiblemente uno por línea. También acepta coma, espacio o punto y coma.",
             )
-            submitted = st.form_submit_button("🔎 Consultar", type="primary")
+            submitted = st.form_submit_button("🔎 Consultar lista", type="primary")
 
         if submitted:
             codes = []
@@ -903,6 +904,29 @@ with query_tab:
             detail = st.session_state["detail"]
             total_sales = st.session_state["total_sales"]
 
+            total_selected_sales = float(result["venta_neta"].sum())
+            total_selected_stock = float(result["existencia_total"].sum())
+            total_selected_units = float(result["unidades_netas"].sum())
+            combined_share = (
+                total_selected_sales / total_sales * 100 if total_sales else 0.0
+            )
+
+            if len(result) > 1:
+                st.markdown("### Resumen de la lista")
+                summary_html = (
+                    f'<div class="metric-grid">'
+                    f'<div class="metric-card primary-green"><div class="metric-value">Q {total_selected_sales:,.2f}</div>'
+                    f'<div class="metric-label">Venta total de los códigos</div></div>'
+                    f'<div class="metric-card primary-blue"><div class="metric-value">{combined_share:.4f}%</div>'
+                    f'<div class="metric-label">% combinado de la venta</div></div>'
+                    f'<div class="metric-card"><div class="metric-value">{total_selected_stock:,.0f}</div>'
+                    f'<div class="metric-label">Existencia total combinada</div></div>'
+                    f'<div class="metric-card"><div class="metric-value">{total_selected_units:,.0f}</div>'
+                    f'<div class="metric-label">Unidades vendidas combinadas</div></div>'
+                    f'</div>'
+                )
+                st.markdown(summary_html, unsafe_allow_html=True)
+
             if len(result) == 1:
                 row = result.iloc[0]
                 badge_class = "badge-zero" if row["existencia_total"] == 0 else "badge-ok"
@@ -923,7 +947,7 @@ with query_tab:
                 st.markdown(product_html, unsafe_allow_html=True)
 
             else:
-                st.markdown(f"### {len(result)} códigos encontrados")
+                st.markdown(f"### Detalle de {len(result)} códigos")
                 for _, row in result.iterrows():
                     stock_color = "#d92d20" if row["existencia_total"] <= 0 else "#079455"
                     multi_html = (
@@ -931,7 +955,7 @@ with query_tab:
                         f'<div class="multi-top"><span>{display_code(row["codigo"])}</span>'
                         f'<span style="color:{stock_color}">{row["existencia_total"]:,.0f} uds.</span></div>'
                         f'<div style="color:#475467;margin-top:.25rem">{row["nombre"] or "Sin descripción"}</div>'
-                        f'<div class="multi-sub"><span>% venta: {row["porcentaje_venta_total"]:.4f}%</span>'
+                        f'<div class="multi-sub"><span>% individual: {row["porcentaje_venta_total"]:.4f}%</span>'
                         f'<span>Q {row["venta_neta"]:,.2f}</span></div>'
                         f'</div>'
                     )
@@ -980,6 +1004,23 @@ with query_tab:
                 )
                 if "Código" in display_download.columns:
                     display_download["Código"] = display_download["Código"].map(display_code)
+
+                summary_export = pd.DataFrame(
+                    [{
+                        "Códigos consultados": len(result),
+                        "Venta total códigos": total_selected_sales,
+                        "% combinado venta": combined_share,
+                        "Existencia combinada": total_selected_stock,
+                        "Unidades vendidas combinadas": total_selected_units,
+                        "Venta bruta total Tienda 6": total_sales,
+                    }]
+                )
+                st.download_button(
+                    "⬇️ Descargar resumen de lista",
+                    data=to_csv_bytes(summary_export),
+                    file_name="resumen_lista_codigos.csv",
+                    mime="text/csv",
+                )
 
                 st.download_button(
                     "⬇️ Descargar resultados",
