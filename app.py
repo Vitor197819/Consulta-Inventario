@@ -918,40 +918,9 @@ with query_tab:
                     f'<div class="metric-card primary-blue"><div class="metric-value">{row["porcentaje_venta_total"]:.4f}%</div><div class="metric-label">% participación en venta</div></div>'
                     f'<div class="metric-card"><div class="metric-value" style="font-size:1.25rem">Q {row["venta_neta"]:,.2f}</div><div class="metric-label">Venta del código</div></div>'
                     f'<div class="metric-card"><div class="metric-value" style="font-size:1.25rem">{row["unidades_netas"]:,.0f}</div><div class="metric-label">Unidades vendidas</div></div>'
-                    f'<div class="metric-card"><div class="metric-value" style="font-size:1.25rem;color:#d92d20">{int(row["tiendas_en_0"])}</div><div class="metric-label">Tiendas en 0</div></div>'
-                    f'<div class="metric-card"><div class="metric-value" style="font-size:1.25rem;color:#b54708">{int(row["tiendas_en_1"])}</div><div class="metric-label">Tiendas en 1</div></div>'
                     f'</div></div>'
                 )
                 st.markdown(product_html, unsafe_allow_html=True)
-
-                st.markdown("### Existencia por tienda")
-                code_detail = detail[detail["codigo"] == row["codigo"]].copy()
-                if code_detail.empty:
-                    st.info("No hay registros de existencia para este código.")
-                else:
-                    rows_html = []
-                    for _, store_row in code_detail.iterrows():
-                        stock = float(store_row["existencia"])
-                        stock_class = "store-stock-zero" if stock <= 0 else "store-stock-ok"
-                        rows_html.append(
-                            f'<div class="store-row"><span class="store-name">Tienda {store_row["tienda"]}</span>'
-                            f'<span class="{stock_class}">{stock:,.0f} uds.</span></div>'
-                        )
-                    st.markdown(
-                        '<div class="store-list">' + "".join(rows_html) + "</div>",
-                        unsafe_allow_html=True,
-                    )
-
-                with st.expander("Ver detalles"):
-                    detail_html = (
-                        f'<div class="reference-box">'
-                        f'<b>Venta bruta total usada como base:</b> Q {total_sales:,.2f}<br>'
-                        f'<b>Categoría:</b> {row["categoria"] or "—"}<br>'
-                        f'<b>Línea:</b> {row["linea"] or "—"}<br>'
-                        f'<b>Estado:</b> {row["estado"]}'
-                        f'</div>'
-                    )
-                    st.markdown(detail_html, unsafe_allow_html=True)
 
             else:
                 st.markdown(f"### {len(result)} códigos encontrados")
