@@ -399,8 +399,14 @@ def find_column(df, logical_name, required=False):
 
 
 def clean_code(series):
+    """
+    Crea una clave canónica para cruzar ventas y existencias.
+    Para códigos numéricos elimina ceros a la izquierda:
+    0123456, 00123456 y 123456 -> 123456.
+    """
     result = series.astype(str).str.strip()
-    result = result.str.replace(r"\.0$", "", regex=True)
+    result = result.str.replace(r"^'+", "", regex=True)
+    result = result.str.replace(r"\.0+$", "", regex=True)
     result = result.str.replace(r"\s+", "", regex=True)
     result = result.str.upper()
 
@@ -409,10 +415,17 @@ def clean_code(series):
         if value.lower() in {"", "nan", "none"}:
             return ""
         if re.fullmatch(r"\d+", value):
-            return value.zfill(7)
+            return value.lstrip("0") or "0"
         return value
 
     return result.map(normalize_one)
+
+def display_code(value):
+    """Muestra códigos numéricos a 7 dígitos sin afectar la clave de cruce."""
+    value = str(value).strip()
+    if re.fullmatch(r"\d+", value):
+        return value.zfill(7)
+    return value
 
 
 def clean_store(series):
@@ -813,10 +826,11 @@ with query_tab:
         if submitted:
             codes = []
             for token in re.split(r"[\s,;]+", query_text.strip()):
-                token = re.sub(r"\.0$", "", token.strip()).upper()
+                token = re.sub(r"\.0+$", "", token.strip()).upper()
+                token = re.sub(r"^'+", "", token)
                 token = re.sub(r"\s+", "", token)
                 if re.fullmatch(r"\d+", token):
-                    token = token.zfill(7)
+                    token = token.lstrip("0") or "0"
                 if token and token not in codes:
                     codes.append(token)
 
@@ -842,7 +856,7 @@ with query_tab:
 
                 product_html = (
                     f'<div class="product-card">'
-                    f'<div><span class="product-code">{row["codigo"]}</span>'
+                    f'<div><span class="product-code">{display_code(row["codigo"])}</span>'
                     f'<span class="{badge_class}" style="float:right">{badge_text}</span></div>'
                     f'<div class="product-name">{row["nombre"] or "Producto sin descripción"}</div>'
                     f'<div class="metric-grid">'
@@ -891,7 +905,7 @@ with query_tab:
                     stock_color = "#d92d20" if row["existencia_total"] <= 0 else "#079455"
                     multi_html = (
                         f'<div class="multi-card">'
-                        f'<div class="multi-top"><span>{row["codigo"]}</span>'
+                        f'<div class="multi-top"><span>{display_code(row["codigo"])}</span>'
                         f'<span style="color:{stock_color}">{row["existencia_total"]:,.0f} uds.</span></div>'
                         f'<div style="color:#475467;margin-top:.25rem">{row["nombre"] or "Sin descripción"}</div>'
                         f'<div class="multi-sub"><span>% venta: {row["porcentaje_venta_total"]:.4f}%</span>'
@@ -941,6 +955,9 @@ with query_tab:
                         "estado": "Estado",
                     }
                 )
+                if "Código" in display_download.columns:
+                    display_download["Código"] = display_download["Código"].map(display_code)
+
                 st.download_button(
                     "⬇️ Descargar resultados",
                     data=to_csv_bytes(display_download),
