@@ -1,50 +1,94 @@
-# Consulta de Inventario y Participación de Venta
 
-Versión reconstruida desde cero.
+# Consulta de Inventario — PostgreSQL persistente
 
-## Funciones
+Esta versión conserva ventas, existencias y metadatos en PostgreSQL.
 
-- Carga diaria de ventas en CSV.
-- Carga directa de existencias en `.xls` o `.xlsx`.
-- Validación previa antes de publicar.
-- Vista del período y cantidad de días.
-- Cálculo correcto de venta neta:
-  `venta + devolución + anulación`.
-- Consulta con Enter.
-- Existencia total y por tienda.
-- Participación porcentual sobre la venta bruta total.
-- Descarga de resultados.
-- Acceso administrativo mediante contraseña.
+## Qué cambia
 
-## Archivos del proyecto
+- Los datos ya no dependen del disco temporal del contenedor de Render.
+- Un redeploy o reinicio de la aplicación no obliga a volver a cargar los archivos.
+- Solo se reemplazan los datos cuando un administrador publica una nueva carga.
+- Si `DATABASE_URL` no existe, la aplicación usa SQLite local como respaldo para pruebas.
+
+## Configuración en Render
+
+### 1. Crear PostgreSQL
+
+En Render:
+
+1. Dashboard → **New +**
+2. **Postgres**
+3. Crear la base de datos.
+4. Cuando esté lista, abrirla y copiar su **Internal Database URL**.
+
+### 2. Conectar la aplicación
+
+En el Web Service `Consulta-Inventario`:
+
+1. **Environment**
+2. Agregar:
+
+   - Key: `DATABASE_URL`
+   - Value: pegar la **Internal Database URL** de PostgreSQL
+
+3. Mantener también:
+
+   - Key: `ADMIN_PASSWORD`
+   - Value: la contraseña administrativa
+
+4. Guardar y desplegar.
+
+### 3. Actualizar el código
+
+Subir/reemplazar en GitHub:
 
 - `app.py`
 - `requirements.txt`
 - `Dockerfile`
 - `render.yaml`
+- `README.md`
 
-## Actualizar en GitHub
+Hacer commit y en Render usar **Deploy latest commit** si el despliegue no inicia automáticamente.
 
-Lo más seguro es reemplazar todos los archivos anteriores por los incluidos en este paquete.
+### 4. Primera carga
 
-## Render
+Después de que la nueva versión esté Live:
 
-1. Render debe usar `Runtime: Docker`.
-2. Crear la variable:
-   - `ADMIN_PASSWORD`: contraseña elegida.
-3. Desplegar el último commit.
-4. Entrar a Administración, validar los archivos y pulsar `Publicar datos`.
+1. Ir a **Administración**
+2. Cargar ventas y existencias
+3. Revisar la validación
+4. Pulsar **Publicar datos**
 
-## Persistencia
+Esa primera publicación se guarda en PostgreSQL. A partir de ahí los redeploys conservan la información.
 
-En el plan gratuito, Render puede reiniciar el contenedor y perder la base local.
-Para uso permanente se recomienda un disco persistente o una base externa.
+## Importante
+
+La base de porcentaje sigue siendo la **venta bruta total (`MONTO_VENTA`) del archivo cargado**.
+
+Los importes con coma decimal y 3–4 decimales, por ejemplo `5804,9448`, se interpretan correctamente como `5804.9448`.
 
 
-## Base del porcentaje
+## Versión móvil
 
-El porcentaje de cada código se calcula así:
+La interfaz está optimizada para celular:
 
-`venta neta del código / venta bruta total del archivo × 100`
+- búsqueda por código con Enter;
+- existencia y participación de venta como indicadores principales;
+- existencia por tienda en lista vertical;
+- resultados múltiples en tarjetas;
+- administración compacta;
+- última actualización visible.
 
-Para el archivo revisado, la base es `Q3,594,777.20`.
+### Agregar a pantalla de inicio
+
+**iPhone / iPad**
+1. Abrir la app en Safari.
+2. Compartir.
+3. `Agregar a pantalla de inicio`.
+
+**Android**
+1. Abrir en Chrome.
+2. Menú `⋮`.
+3. `Agregar a pantalla de inicio` o `Instalar app`.
+
+No requiere una aplicación nativa.
