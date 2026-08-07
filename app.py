@@ -905,6 +905,12 @@ def to_csv_bytes(df):
 
 
 
+def clear_query_codes():
+    st.session_state["query_codes"] = ""
+    for key in ("result", "detail", "total_sales"):
+        st.session_state.pop(key, None)
+
+
 metadata = get_metadata()
 
 st.title("📦 Inventario Tienda 6")
@@ -937,8 +943,15 @@ with query_tab:
                 placeholder="Un código por línea\nEjemplo:\n3027003\n0123456\n1001057",
                 height=150,
                 help="Pega una lista de códigos, preferiblemente uno por línea. También acepta coma, espacio o punto y coma.",
+                key="query_codes",
             )
-            submitted = st.form_submit_button("🔎 Consultar lista", type="primary")
+            submitted = st.form_submit_button("🔎 Consultar", type="primary")
+
+        st.button(
+            "🧹 Borrar códigos",
+            on_click=clear_query_codes,
+            use_container_width=True,
+        )
 
         if submitted:
             codes = []
