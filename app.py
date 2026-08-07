@@ -608,15 +608,23 @@ def prepare_sales(df):
     return out.reset_index(drop=True)
 
 
-def prepare_inventory(df, exclude_negatives=True):
+def prepare_inventory(df, exclude_negatives=True, default_store=""):
     codigo_col = find_column(df, "codigo", True)
-    tienda_col = find_column(df, "tienda", True)
+    tienda_col = find_column(df, "tienda", False)
     existencia_col = find_column(df, "existencia", True)
     nombre_col = find_column(df, "nombre")
 
     out = pd.DataFrame(index=df.index)
     out["codigo"] = clean_code(df[codigo_col])
-    out["tienda"] = clean_store(df[tienda_col])
+
+    if tienda_col:
+        out["tienda"] = clean_store(df[tienda_col])
+    else:
+        # Algunos reportes de existencias son específicos de una sola tienda
+        # y no incluyen columna TIENDA/TIENAT. En ese caso usamos la tienda
+        # detectada en el archivo de ventas.
+        out["tienda"] = str(default_store).strip()
+
     out["existencia"] = parse_number(df[existencia_col])
     out["nombre_inventario"] = (
         df[nombre_col].astype(str).str.strip() if nombre_col else ""
@@ -624,6 +632,7 @@ def prepare_inventory(df, exclude_negatives=True):
 
     out = out[out["codigo"].ne("")]
     out = out[out["codigo"].str.lower().ne("nan")]
+
     if exclude_negatives:
         out = out[out["existencia"] >= 0]
 
@@ -997,17 +1006,36 @@ with admin_tab:
                     raw_sales = read_csv_file(sales_file)
                     raw_inventory = detect_header_and_read_excel(inventory_file)
                     sales_ready = prepare_sales(raw_sales)
-                    inventory_ready = prepare_inventory(
-                        raw_inventory,
-                        exclude_negatives=exclude_negatives,
-                    )
 
-                    valid_dates = sales_ready["fecha"].dropna()
-                    total_sales_preview = float(sales_ready["venta"].sum())
                     stores = sorted(
                         s for s in sales_ready["tienda"].dropna().astype(str).unique()
                         if s and s.lower() != "nan"
                     )
+
+                    default_store = stores[0] if len(stores) == 1 else ""
+
+                    inventory_ready = prepare_inventory(
+                        raw_inventory,
+                        exclude_negatives=exclude_negatives,
+                        default_store=default_store,
+                    )
+
+                    valid_dates = sales_ready["fecha"].dropna()
+                    total_sales_preview = float(sales_ready["venta"].sum())
+
+                    if not find_column(raw_inventory, "tienda", False):
+                        if len(stores) == 1:
+                            st.success(
+                                f"El archivo de existencias no trae columna de tienda. "
+                                f"Se asignará automáticamente a la Tienda {stores[0]}."
+                            )
+                        elif len(stores) > 1:
+                            st.error(
+                                "El archivo de existencias no trae columna de tienda, "
+                                "pero ventas contiene varias tiendas. No se puede asignar "
+                                "la existencia con seguridad."
+                            )
+                            st.stop()
 
                     st.markdown("### Validación previa")
                     c1, c2 = st.columns(2)
@@ -1050,6 +1078,15 @@ with admin_tab:
                                 "Monto": st.column_config.NumberColumn(format="Q %.2f")
                             },
                         )
+
+                    sales_code_set = set(sales_ready["codigo"].dropna().astype(str))
+                    inv_code_set = set(inventory_ready["codigo"].dropna().astype(str))
+                    common_codes = len(sales_code_set & inv_code_set)
+
+                    st.caption(
+                        f"Cruce de códigos: {common_codes:,} códigos de ventas "
+                        f"también aparecen en existencias."
+                    )
 
                     if st.button("✅ Publicar datos", type="primary"):
                         if sales_ready.empty:
