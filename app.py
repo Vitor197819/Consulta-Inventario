@@ -331,6 +331,68 @@ st.markdown(
             font-size: 0.82rem;
         }
     }
+    
+    /* Administración móvil: asegurar contraste y etiquetas visibles */
+    [data-testid="stTextInput"] label,
+    [data-testid="stTextArea"] label,
+    [data-testid="stFileUploader"] label,
+    [data-testid="stCheckbox"] label {
+        color: #101828 !important;
+        font-weight: 700 !important;
+        font-size: 0.92rem !important;
+    }
+
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea {
+        background: #ffffff !important;
+        color: #101828 !important;
+        border: 1px solid #d0d5dd !important;
+        border-radius: 12px !important;
+    }
+
+    [data-testid="stTextInput"] input::placeholder,
+    [data-testid="stTextArea"] textarea::placeholder {
+        color: #98a2b3 !important;
+        opacity: 1 !important;
+    }
+
+    [data-testid="stFileUploader"] {
+        background: transparent !important;
+    }
+
+    [data-testid="stFileUploaderDropzone"] {
+        background: #ffffff !important;
+        border: 1.5px dashed #98a2b3 !important;
+        color: #344054 !important;
+        min-height: 110px !important;
+    }
+
+    [data-testid="stFileUploaderDropzone"] * {
+        color: #344054 !important;
+    }
+
+    [data-testid="stTabs"] button[role="tab"] {
+        color: #475467 !important;
+    }
+
+    [data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+        color: #175cd3 !important;
+        border-bottom-color: #175cd3 !important;
+    }
+
+    .admin-title {
+        font-size: 1.25rem;
+        font-weight: 800;
+        color: #101828;
+        margin: 0.4rem 0 0.2rem 0;
+    }
+
+    .admin-help {
+        color: #667085;
+        font-size: 0.88rem;
+        margin-bottom: 0.8rem;
+    }
+
     </style>
     """,
     unsafe_allow_html=True,
@@ -1030,10 +1092,14 @@ with query_tab:
                 )
 
 with admin_tab:
-    st.subheader("Actualización de datos")
-    st.caption("Carga los archivos. La app usa únicamente Tienda 6 y guarda los datos consolidados en Supabase.")
+    st.markdown('<div class="admin-title">Actualización de datos</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="admin-help">Carga ventas y existencias de Tienda 6. '
+        'La nueva publicación reemplaza los datos anteriores.</div>',
+        unsafe_allow_html=True,
+    )
 
-    password = st.text_input("Clave de administrador", type="password")
+    password = st.text_input("Clave de administrador", type="password", placeholder="Ingresa la clave")
 
     if password:
         if password != ADMIN_PASSWORD:
@@ -1042,12 +1108,12 @@ with admin_tab:
             st.success("Acceso autorizado.")
 
             sales_file = st.file_uploader(
-                "1. Archivo de ventas (.csv)",
+                "1. Ventas (.csv)",
                 type=["csv"],
                 help="Archivo CSV de movimiento de ventas.",
             )
             inventory_file = st.file_uploader(
-                "2. Archivo de existencias (.xls o .xlsx)",
+                "2. Existencias (.xls o .xlsx)",
                 type=["xls", "xlsx"],
                 help="Se aceptan archivos Excel .xls y .xlsx.",
             )
