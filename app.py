@@ -1061,4 +1061,3 @@ with admin_tab:
                     st.error(f"No se pudo validar la carga: {exc}")
             else:
                 st.info("Selecciona ambos archivos para validar la información.")
-
