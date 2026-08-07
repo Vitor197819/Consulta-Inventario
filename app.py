@@ -402,7 +402,17 @@ def clean_code(series):
     result = series.astype(str).str.strip()
     result = result.str.replace(r"\.0$", "", regex=True)
     result = result.str.replace(r"\s+", "", regex=True)
-    return result.str.upper()
+    result = result.str.upper()
+
+    def normalize_one(value):
+        value = str(value).strip().upper()
+        if value.lower() in {"", "nan", "none"}:
+            return ""
+        if re.fullmatch(r"\d+", value):
+            return value.zfill(7)
+        return value
+
+    return result.map(normalize_one)
 
 
 def clean_store(series):
@@ -804,6 +814,9 @@ with query_tab:
             codes = []
             for token in re.split(r"[\s,;]+", query_text.strip()):
                 token = re.sub(r"\.0$", "", token.strip()).upper()
+                token = re.sub(r"\s+", "", token)
+                if re.fullmatch(r"\d+", token):
+                    token = token.zfill(7)
                 if token and token not in codes:
                     codes.append(token)
 
