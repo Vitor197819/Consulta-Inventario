@@ -8,6 +8,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, inspect, text as sql_text
+from sqlalchemy.engine import URL
 from sqlalchemy.pool import NullPool
 
 APP_NAME = "Consulta de Inventario y Participación de Venta"
@@ -17,17 +18,34 @@ DB_PATH = DATA_DIR / "inventario.db"
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Cambiar123")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-if DATABASE_URL:
+DB_HOST = os.getenv("DB_HOST", "").strip()
+DB_PORT = os.getenv("DB_PORT", "5432").strip()
+DB_NAME = os.getenv("DB_NAME", "postgres").strip()
+DB_USER = os.getenv("DB_USER", "").strip()
+DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+
+USE_SEPARATE_DB_VARS = all([DB_HOST, DB_USER, DB_PASSWORD])
+
+if USE_SEPARATE_DB_VARS:
+    DB_URL = URL.create(
+        drivername="postgresql+psycopg2",
+        username=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=int(DB_PORT),
+        database=DB_NAME,
+    )
+elif DATABASE_URL:
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
     DB_URL = DATABASE_URL
 else:
     DB_URL = f"sqlite:///{DB_PATH}"
 
 @st.cache_resource
 def get_engine():
-    # NullPool avoids stale connections when Render restarts instances.
+    # Using URL.create avoids password parsing problems with @, #, %, :, etc.
     return create_engine(DB_URL, pool_pre_ping=True, poolclass=NullPool)
 
 st.set_page_config(
