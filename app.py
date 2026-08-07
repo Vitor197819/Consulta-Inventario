@@ -827,45 +827,21 @@ with query_tab:
                 badge_class = "badge-zero" if row["existencia_total"] == 0 else "badge-ok"
                 badge_text = "Agotado" if row["existencia_total"] == 0 else "Disponible"
 
-                st.markdown(
-                    f"""
-                    <div class="product-card">
-                        <div>
-                            <span class="product-code">{row['codigo']}</span>
-                            <span class="{badge_class}" style="float:right">{badge_text}</span>
-                        </div>
-                        <div class="product-name">{row['nombre'] or 'Producto sin descripción'}</div>
-
-                        <div class="metric-grid">
-                            <div class="metric-card primary-green">
-                                <div class="metric-value">{row['existencia_total']:,.0f}</div>
-                                <div class="metric-label">Existencia total</div>
-                            </div>
-                            <div class="metric-card primary-blue">
-                                <div class="metric-value">{row['porcentaje_venta_total']:.4f}%</div>
-                                <div class="metric-label">% participación en venta</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-value" style="font-size:1.25rem">Q {row['venta_neta']:,.2f}</div>
-                                <div class="metric-label">Venta del código</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-value" style="font-size:1.25rem">{row['unidades_netas']:,.0f}</div>
-                                <div class="metric-label">Unidades vendidas</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-value" style="font-size:1.25rem;color:#d92d20">{int(row['tiendas_en_0'])}</div>
-                                <div class="metric-label">Tiendas en 0</div>
-                            </div>
-                            <div class="metric-card">
-                                <div class="metric-value" style="font-size:1.25rem;color:#b54708">{int(row['tiendas_en_1'])}</div>
-                                <div class="metric-label">Tiendas en 1</div>
-                            </div>
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
+                product_html = (
+                    f'<div class="product-card">'
+                    f'<div><span class="product-code">{row["codigo"]}</span>'
+                    f'<span class="{badge_class}" style="float:right">{badge_text}</span></div>'
+                    f'<div class="product-name">{row["nombre"] or "Producto sin descripción"}</div>'
+                    f'<div class="metric-grid">'
+                    f'<div class="metric-card primary-green"><div class="metric-value">{row["existencia_total"]:,.0f}</div><div class="metric-label">Existencia total</div></div>'
+                    f'<div class="metric-card primary-blue"><div class="metric-value">{row["porcentaje_venta_total"]:.4f}%</div><div class="metric-label">% participación en venta</div></div>'
+                    f'<div class="metric-card"><div class="metric-value" style="font-size:1.25rem">Q {row["venta_neta"]:,.2f}</div><div class="metric-label">Venta del código</div></div>'
+                    f'<div class="metric-card"><div class="metric-value" style="font-size:1.25rem">{row["unidades_netas"]:,.0f}</div><div class="metric-label">Unidades vendidas</div></div>'
+                    f'<div class="metric-card"><div class="metric-value" style="font-size:1.25rem;color:#d92d20">{int(row["tiendas_en_0"])}</div><div class="metric-label">Tiendas en 0</div></div>'
+                    f'<div class="metric-card"><div class="metric-value" style="font-size:1.25rem;color:#b54708">{int(row["tiendas_en_1"])}</div><div class="metric-label">Tiendas en 1</div></div>'
+                    f'</div></div>'
                 )
+                st.markdown(product_html, unsafe_allow_html=True)
 
                 st.markdown("### Existencia por tienda")
                 code_detail = detail[detail["codigo"] == row["codigo"]].copy()
@@ -877,12 +853,8 @@ with query_tab:
                         stock = float(store_row["existencia"])
                         stock_class = "store-stock-zero" if stock <= 0 else "store-stock-ok"
                         rows_html.append(
-                            f"""
-                            <div class="store-row">
-                                <span class="store-name">Tienda {store_row['tienda']}</span>
-                                <span class="{stock_class}">{stock:,.0f} uds.</span>
-                            </div>
-                            """
+                            f'<div class="store-row"><span class="store-name">Tienda {store_row["tienda"]}</span>'
+                            f'<span class="{stock_class}">{stock:,.0f} uds.</span></div>'
                         )
                     st.markdown(
                         '<div class="store-list">' + "".join(rows_html) + "</div>",
@@ -890,38 +862,30 @@ with query_tab:
                     )
 
                 with st.expander("Ver detalles"):
-                    st.markdown(
-                        f"""
-                        <div class="reference-box">
-                            <b>Venta bruta total usada como base:</b> Q {total_sales:,.2f}<br>
-                            <b>Categoría:</b> {row['categoria'] or '—'}<br>
-                            <b>Línea:</b> {row['linea'] or '—'}<br>
-                            <b>Estado:</b> {row['estado']}
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
+                    detail_html = (
+                        f'<div class="reference-box">'
+                        f'<b>Venta bruta total usada como base:</b> Q {total_sales:,.2f}<br>'
+                        f'<b>Categoría:</b> {row["categoria"] or "—"}<br>'
+                        f'<b>Línea:</b> {row["linea"] or "—"}<br>'
+                        f'<b>Estado:</b> {row["estado"]}'
+                        f'</div>'
                     )
+                    st.markdown(detail_html, unsafe_allow_html=True)
 
             else:
                 st.markdown(f"### {len(result)} códigos encontrados")
                 for _, row in result.iterrows():
                     stock_color = "#d92d20" if row["existencia_total"] <= 0 else "#079455"
-                    st.markdown(
-                        f"""
-                        <div class="multi-card">
-                            <div class="multi-top">
-                                <span>{row['codigo']}</span>
-                                <span style="color:{stock_color}">{row['existencia_total']:,.0f} uds.</span>
-                            </div>
-                            <div style="color:#475467;margin-top:.25rem">{row['nombre'] or 'Sin descripción'}</div>
-                            <div class="multi-sub">
-                                <span>% venta: {row['porcentaje_venta_total']:.4f}%</span>
-                                <span>Q {row['venta_neta']:,.2f}</span>
-                            </div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
+                    multi_html = (
+                        f'<div class="multi-card">'
+                        f'<div class="multi-top"><span>{row["codigo"]}</span>'
+                        f'<span style="color:{stock_color}">{row["existencia_total"]:,.0f} uds.</span></div>'
+                        f'<div style="color:#475467;margin-top:.25rem">{row["nombre"] or "Sin descripción"}</div>'
+                        f'<div class="multi-sub"><span>% venta: {row["porcentaje_venta_total"]:.4f}%</span>'
+                        f'<span>Q {row["venta_neta"]:,.2f}</span></div>'
+                        f'</div>'
                     )
+                    st.markdown(multi_html, unsafe_allow_html=True)
 
                 with st.expander("Ver tabla completa"):
                     display = result.rename(
