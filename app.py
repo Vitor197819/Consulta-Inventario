@@ -16,6 +16,7 @@ DATA_DIR = Path(os.getenv("DATA_DIR", "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = DATA_DIR / "inventario.db"
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Cambiar123")
+FIXED_STORE = "6"
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 
@@ -659,29 +660,74 @@ def table_exists(name):
     return inspect(get_engine()).has_table(name)
 
 
+def aggregate_sales_for_storage(sales):
+    sales = sales[sales["tienda"].astype(str) == FIXED_STORE].copy()
+    if sales.empty:
+        raise ValueError("El archivo de ventas no contiene registros de la Tienda 6.")
+
+    return (
+        sales.groupby("codigo", as_index=False)
+        .agg(
+            tienda=("tienda", "first"),
+            nombre=("nombre", first_nonempty),
+            categoria=("categoria", first_nonempty),
+            linea=("linea", first_nonempty),
+            venta=("venta", "sum"),
+            devolucion=("devolucion", "sum"),
+            anulacion=("anulacion", "sum"),
+            venta_neta=("venta_neta", "sum"),
+            unidades_venta=("unidades_venta", "sum"),
+            unidades_devolucion=("unidades_devolucion", "sum"),
+            unidades_anulacion=("unidades_anulacion", "sum"),
+            unidades_netas=("unidades_netas", "sum"),
+        )
+    )
+
+
+def aggregate_inventory_for_storage(inventory):
+    inventory = inventory.copy()
+    inventory["tienda"] = FIXED_STORE
+    return (
+        inventory.groupby("codigo", as_index=False)
+        .agg(
+            tienda=("tienda", "first"),
+            existencia=("existencia", "sum"),
+            nombre_inventario=("nombre_inventario", first_nonempty),
+        )
+    )
+
+
 def save_database(sales, inventory, sales_name, inventory_name):
     initialize_database()
     engine = get_engine()
 
-    # Escribimos primero tablas temporales y luego reemplazamos en una transacción.
-    # Esto evita dejar datos a medias si una carga falla.
+    sales_t6 = sales[sales["tienda"].astype(str) == FIXED_STORE].copy()
+    if sales_t6.empty:
+        raise ValueError("No se encontraron ventas de la Tienda 6.")
+
+    valid_dates = sales_t6["fecha"].dropna()
+    total_gross = float(sales_t6["venta"].sum())
+
+    sales_db = aggregate_sales_for_storage(sales_t6)
+    inventory_db = aggregate_inventory_for_storage(inventory)
+
     sales_tmp = "sales_upload_tmp"
     inventory_tmp = "inventory_upload_tmp"
 
-    sales.to_sql(sales_tmp, engine, if_exists="replace", index=False, method="multi", chunksize=1000)
-    inventory.to_sql(inventory_tmp, engine, if_exists="replace", index=False, method="multi", chunksize=1000)
+    sales_db.to_sql(sales_tmp, engine, if_exists="replace", index=False, method="multi", chunksize=1000)
+    inventory_db.to_sql(inventory_tmp, engine, if_exists="replace", index=False, method="multi", chunksize=1000)
 
-    valid_dates = sales["fecha"].dropna()
+    valid_dates = sales_t6["fecha"].dropna()
     metadata = {
         "updated_at": datetime.now().strftime("%d/%m/%Y %H:%M"),
         "sales_file": sales_name,
         "inventory_file": inventory_name,
-        "sales_rows": str(len(sales)),
-        "inventory_rows": str(len(inventory)),
+        "sales_rows": str(len(sales_db)),
+        "inventory_rows": str(len(inventory_db)),
         "date_min": valid_dates.min().strftime("%d/%m/%Y") if len(valid_dates) else "No detectada",
         "date_max": valid_dates.max().strftime("%d/%m/%Y") if len(valid_dates) else "No detectada",
         "days": str(valid_dates.dt.normalize().nunique()) if len(valid_dates) else "0",
-        "total_sales": str(float(sales["venta"].sum())),
+        "total_sales": str(total_gross),
     }
 
     with engine.begin() as conn:
@@ -716,7 +762,6 @@ def load_database(updated_at):
     engine = get_engine()
     sales = pd.read_sql_query(sql_text("SELECT * FROM sales"), engine)
     inventory = pd.read_sql_query(sql_text("SELECT * FROM inventory"), engine)
-    sales["fecha"] = pd.to_datetime(sales["fecha"], errors="coerce")
     return sales, inventory
 
 
@@ -800,7 +845,7 @@ def to_csv_bytes(df):
 
 metadata = get_metadata()
 
-st.title("📦 Consulta Inventario")
+st.title("📦 Inventario Tienda 6")
 
 if metadata:
     st.markdown(
@@ -976,7 +1021,7 @@ with query_tab:
 
 with admin_tab:
     st.subheader("Actualización de datos")
-    st.caption("Carga los dos archivos. La nueva publicación reemplaza la información anterior y queda guardada en Supabase.")
+    st.caption("Carga los archivos. La app usa únicamente Tienda 6 y guarda los datos consolidados en Supabase.")
 
     password = st.text_input("Clave de administrador", type="password")
 
@@ -1006,36 +1051,27 @@ with admin_tab:
                     raw_sales = read_csv_file(sales_file)
                     raw_inventory = detect_header_and_read_excel(inventory_file)
                     sales_ready = prepare_sales(raw_sales)
+                    sales_ready = sales_ready[sales_ready["tienda"].astype(str) == FIXED_STORE].copy()
 
-                    stores = sorted(
-                        s for s in sales_ready["tienda"].dropna().astype(str).unique()
-                        if s and s.lower() != "nan"
-                    )
+                    if sales_ready.empty:
+                        raise ValueError("El archivo de ventas no contiene datos de la Tienda 6.")
 
-                    default_store = stores[0] if len(stores) == 1 else ""
+                    stores = [FIXED_STORE]
 
                     inventory_ready = prepare_inventory(
                         raw_inventory,
                         exclude_negatives=exclude_negatives,
-                        default_store=default_store,
+                        default_store=FIXED_STORE,
                     )
+                    inventory_ready["tienda"] = FIXED_STORE
 
                     valid_dates = sales_ready["fecha"].dropna()
                     total_sales_preview = float(sales_ready["venta"].sum())
 
-                    if not find_column(raw_inventory, "tienda", False):
-                        if len(stores) == 1:
-                            st.success(
-                                f"El archivo de existencias no trae columna de tienda. "
-                                f"Se asignará automáticamente a la Tienda {stores[0]}."
-                            )
-                        elif len(stores) > 1:
-                            st.error(
-                                "El archivo de existencias no trae columna de tienda, "
-                                "pero ventas contiene varias tiendas. No se puede asignar "
-                                "la existencia con seguridad."
-                            )
-                            st.stop()
+                    st.success(
+                        "Modo Tienda 6: ventas filtradas automáticamente a Tienda 6 "
+                        "y existencias asignadas a Tienda 6."
+                    )
 
                     st.markdown("### Validación previa")
                     c1, c2 = st.columns(2)
@@ -1043,8 +1079,8 @@ with admin_tab:
                     c2.metric("Días detectados", f"{valid_dates.dt.normalize().nunique() if len(valid_dates) else 0}")
 
                     c3, c4 = st.columns(2)
-                    c3.metric("Registros ventas", f"{len(sales_ready):,}")
-                    c4.metric("Registros existencias", f"{len(inventory_ready):,}")
+                    c3.metric("Códigos con venta", f"{sales_ready['codigo'].nunique():,}")
+                    c4.metric("Códigos en existencia", f"{inventory_ready['codigo'].nunique():,}")
 
                     if len(valid_dates):
                         st.info(
