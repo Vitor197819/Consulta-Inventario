@@ -125,17 +125,16 @@ def parse_number(series):
         if not text or text == "-":
             return 0.0
 
+        # En MovimientoDeVentas la coma es siempre separador decimal,
+        # incluso cuando el reporte entrega 3 o 4 decimales (ej. 5804,9448).
         if "," in text and "." in text:
+            # Si aparecen ambos separadores, el último se toma como decimal.
             if text.rfind(",") > text.rfind("."):
                 text = text.replace(".", "").replace(",", ".")
             else:
                 text = text.replace(",", "")
         elif "," in text:
-            last = text.split(",")[-1]
-            if len(last) in (1, 2):
-                text = text.replace(".", "").replace(",", ".")
-            else:
-                text = text.replace(",", "")
+            text = text.replace(",", ".")
 
         try:
             return float(text)
@@ -648,13 +647,13 @@ with admin_tab:
                     )
 
                     valid_dates = sales_ready["fecha"].dropna()
-                    total_sales_preview = float(sales_ready["venta_neta"].sum())
+                    total_sales_preview = float(sales_ready["venta"].sum())
 
                     st.markdown("#### Validación previa")
                     col1, col2, col3, col4 = st.columns(4)
                     col1.metric("Registros de ventas", f"{len(sales_ready):,}")
                     col2.metric("Registros de existencias", f"{len(inventory_ready):,}")
-                    col3.metric("Venta neta total", f"Q {total_sales_preview:,.2f}")
+                    col3.metric("Venta bruta total (base %)", f"Q {total_sales_preview:,.2f}")
                     col4.metric(
                         "Días detectados",
                         f"{valid_dates.dt.normalize().nunique() if len(valid_dates) else 0}",
