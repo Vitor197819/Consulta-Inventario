@@ -1,26 +1,39 @@
+# Inventario Tienda 6 — nueva base
 
-# Consulta Inventario móvil — conexión Supabase robusta
+Reconstruida para los archivos:
 
-Esta versión evita construir manualmente `DATABASE_URL`.
+- `Vta2026.xlsx`
+- `fallaApp.xlsx`
 
-En Render configura estas variables por separado:
+## Estructura utilizada
 
-- `ADMIN_PASSWORD`: contraseña del administrador de la app
-- `DB_HOST`: host del Session Pooler de Supabase
-- `DB_PORT`: `5432`
-- `DB_NAME`: `postgres`
-- `DB_USER`: usuario completo del pooler, por ejemplo `postgres.<PROJECT_REF>`
-- `DB_PASSWORD`: contraseña real de la base de datos de Supabase
+### Vta2026
+- CODIGO
+- DESCRIPCION
+- PZAS
+- MONTO
+- PRECIO
 
-Para el proyecto mostrado durante la configuración:
+### fallaApp
+- CODIGO
+- DEPTO
+- DESCRIPCION
+- TIPAMA
+- EXIST
+- PRECIO
 
-- DB_HOST: `aws-0-ca-central-1.pooler.supabase.com`
-- DB_PORT: `5432`
-- DB_NAME: `postgres`
-- DB_USER: copiar exactamente el valor de `user` mostrado por Supabase
+## Regla de códigos
 
-La contraseña se introduce separadamente, por lo que caracteres especiales como `@`, `#`, `%`, `/` o `:` ya no rompen la conexión.
+No se agregan ni eliminan ceros iniciales.  
+Solo se eliminan espacios y un posible `.0` agregado por Excel.
 
-Después de guardar las variables en Render, hacer un redeploy.
+## Cálculos
 
-`DATABASE_URL` puede eliminarse para evitar que una configuración antigua cause confusión.
+- Venta del código = `MONTO`
+- Piezas vendidas = `PZAS`
+- Existencia = `EXIST`
+- % combinado = suma de `MONTO` de los códigos consultados / venta total del archivo `Vta2026`
+
+Venta total observada en el archivo de prueba: Q 5,298,950.79.
+
+La app consolida los archivos al publicar y guarda una sola tabla `products` en Supabase para acelerar las consultas.
