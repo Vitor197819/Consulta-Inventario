@@ -1,39 +1,42 @@
-# Inventario Tienda 6 — nueva base
+# Inventario Tienda 6
 
-Reconstruida para los archivos:
+Nueva versión construida para:
 
-- `Vta2026.xlsx`
-- `fallaApp.xlsx`
+- `Vta2026(1).xlsx`
+- `fallaApp(4).xlsx`
 
-## Estructura utilizada
+## Columnas reales detectadas
 
-### Vta2026
+### Ventas
 - CODIGO
 - DESCRIPCION
+- EXISTENCIA
 - PZAS
 - MONTO
 - PRECIO
 
-### fallaApp
+### Existencias
 - CODIGO
-- DEPTO
 - DESCRIPCION
-- TIPAMA
 - EXIST
-- PRECIO
 
-## Regla de códigos
+## Reglas
 
-No se agregan ni eliminan ceros iniciales.  
-Solo se eliminan espacios y un posible `.0` agregado por Excel.
+- No se agregan ceros.
+- No se eliminan ceros iniciales.
+- El código se cruza tal como viene.
+- Solo se limpia un posible `.0` de Excel.
 
 ## Cálculos
 
-- Venta del código = `MONTO`
-- Piezas vendidas = `PZAS`
-- Existencia = `EXIST`
-- % combinado = suma de `MONTO` de los códigos consultados / venta total del archivo `Vta2026`
+- Venta = MONTO
+- Piezas vendidas = PZAS
+- Existencia actual = EXIST
+- % sobre venta total = venta de códigos consultados / venta total Vta2026
 
-Venta total observada en el archivo de prueba: Q 5,298,950.79.
+## Validación realizada con los archivos entregados
 
-La app consolida los archivos al publicar y guarda una sola tabla `products` en Supabase para acelerar las consultas.
+- Venta total: Q 5,298,950.79
+- Códigos únicos en ventas: 11,216
+- Códigos únicos en existencias: 51,364
+- Códigos que cruzan directamente: 11,003
