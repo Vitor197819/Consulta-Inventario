@@ -355,7 +355,7 @@ def read_locations(uploaded):
 
     required = {
         "ARTICULO", "ZONA", "SUBZONA", "ELEMENTO",
-        "VIGA", "POSICION", "TIPO_UBICACION"
+        "VIGA", "POSICION", "TIPO_UBICACION", "CANTIDAD"
     }
     missing = required - set(df.columns)
     if missing:
@@ -372,8 +372,25 @@ def read_locations(uploaded):
     out["viga"] = df["VIGA"].astype(str).str.strip()
     out["posicion"] = df["POSICION"].astype(str).str.strip()
     out["tipo_ubicacion"] = df["TIPO_UBICACION"].astype(str).str.strip()
+    out["cantidad"] = pd.to_numeric(
+        df["CANTIDAD"].astype(str).str.replace(",", ".", regex=False),
+        errors="coerce",
+    ).fillna(0.0)
 
-    return out[out["codigo"].ne("")].drop_duplicates()
+    out = out[out["codigo"].ne("")]
+
+    # Si el mismo artículo aparece repetido exactamente en la misma ubicación,
+    # consolidamos esas filas sumando la cantidad.
+    group_cols = [
+        "codigo", "zona", "subzona", "elemento",
+        "viga", "posicion", "tipo_ubicacion"
+    ]
+    out = (
+        out.groupby(group_cols, as_index=False, dropna=False)
+        .agg(cantidad=("cantidad", "sum"))
+    )
+
+    return out
 
 
 def location_line(row):
@@ -384,6 +401,7 @@ def location_line(row):
     elemento = str(row.get("elemento", "")).strip()
     viga = str(row.get("viga", "")).strip()
     posicion = str(row.get("posicion", "")).strip()
+    cantidad = float(row.get("cantidad", 0) or 0)
 
     if tipo:
         parts.append(tipo)
@@ -397,6 +415,13 @@ def location_line(row):
         parts.append(f"Viga {viga}")
     if posicion:
         parts.append(f"Posición {posicion}")
+
+    if cantidad.is_integer():
+        cantidad_texto = f"{int(cantidad):,}"
+    else:
+        cantidad_texto = f"{cantidad:,.2f}"
+
+    parts.append(f"Cantidad {cantidad_texto}")
 
     return " · ".join(parts)
 
@@ -832,7 +857,8 @@ with tab_admin:
                     st.info(
                         f"Se guardarán {len(products):,} productos consolidados. "
                         f"Ubicaciones: {location_codes:,} códigos y "
-                        f"{len(locations):,} registros únicos."
+                        f"{len(locations):,} ubicaciones consolidadas, "
+                        f"cada una con su cantidad."
                     )
 
                     if st.button(
