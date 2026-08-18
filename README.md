@@ -40,3 +40,8 @@ Nueva versión construida para:
 - Códigos únicos en ventas: 11,216
 - Códigos únicos en existencias: 51,364
 - Códigos que cruzan directamente: 11,003
+
+
+## Ubicaciones
+Se agregó `XXVEProductAisleRack.csv` como tercer archivo de carga.
+La app muestra todas las ubicaciones encontradas por artículo usando TIPO_UBICACION, ZONA, SUBZONA, ELEMENTO, VIGA y POSICION.
