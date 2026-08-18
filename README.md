@@ -45,3 +45,12 @@ Nueva versión construida para:
 ## Ubicaciones
 Se agregó `XXVEProductAisleRack.csv` como tercer archivo de carga.
 La app muestra todas las ubicaciones encontradas por artículo usando TIPO_UBICACION, ZONA, SUBZONA, ELEMENTO, VIGA y POSICION.
+
+
+## Cantidad por ubicación
+
+Se utiliza la columna `CANTIDAD` del archivo `XXVEProductAisleRack.csv`.
+
+Cada ubicación muestra su cantidad correspondiente. Si un mismo código aparece
+varias veces en exactamente la misma ubicación, las cantidades se suman antes
+de mostrarse.
