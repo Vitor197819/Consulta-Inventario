@@ -187,6 +187,33 @@ st.markdown(
         h1{font-size:1.22rem !important;}
         .metric-value{font-size:1.2rem;}
     }
+    
+    .location-box {
+        margin-top:.55rem;
+        padding:.65rem .7rem;
+        background:#f9fafb;
+        border:1px solid #eaecf0;
+        border-radius:12px;
+    }
+    .location-title {
+        color:#344054;
+        font-size:.8rem;
+        font-weight:800;
+        margin-bottom:.35rem;
+    }
+    .location-line {
+        color:#475467;
+        font-size:.82rem;
+        padding:.28rem 0;
+        border-bottom:1px solid #f0f1f3;
+    }
+    .location-line:last-child { border-bottom:0; }
+    .no-location {
+        color:#98a2b3;
+        font-size:.82rem;
+        font-style:italic;
+    }
+
     </style>
     """,
     unsafe_allow_html=True,
@@ -301,7 +328,106 @@ def read_inventory(uploaded):
     return out[out["codigo"].ne("")]
 
 
-def build_products(sales, inventory):
+
+def read_locations(uploaded):
+    raw = uploaded.getvalue()
+    df = None
+    last_error = None
+
+    for encoding in ("utf-8-sig", "utf-8", "cp1252", "latin1"):
+        try:
+            candidate = pd.read_csv(
+                io.BytesIO(raw),
+                dtype=str,
+                keep_default_na=False,
+                encoding=encoding,
+            )
+            if "ARTICULO" in candidate.columns:
+                df = candidate
+                break
+        except Exception as exc:
+            last_error = exc
+
+    if df is None:
+        raise ValueError(
+            f"Archivo de ubicaciones: no se pudo leer el CSV. {last_error or ''}"
+        )
+
+    required = {
+        "ARTICULO", "ZONA", "SUBZONA", "ELEMENTO",
+        "VIGA", "POSICION", "TIPO_UBICACION"
+    }
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(
+            "Archivo de ubicaciones: faltan columnas "
+            + ", ".join(sorted(missing))
+        )
+
+    out = pd.DataFrame()
+    out["codigo"] = df["ARTICULO"].map(normalize_code)
+    out["zona"] = df["ZONA"].astype(str).str.strip()
+    out["subzona"] = df["SUBZONA"].astype(str).str.strip()
+    out["elemento"] = df["ELEMENTO"].astype(str).str.strip()
+    out["viga"] = df["VIGA"].astype(str).str.strip()
+    out["posicion"] = df["POSICION"].astype(str).str.strip()
+    out["tipo_ubicacion"] = df["TIPO_UBICACION"].astype(str).str.strip()
+
+    return out[out["codigo"].ne("")].drop_duplicates()
+
+
+def location_line(row):
+    parts = []
+    tipo = str(row.get("tipo_ubicacion", "")).strip()
+    zona = str(row.get("zona", "")).strip()
+    subzona = str(row.get("subzona", "")).strip()
+    elemento = str(row.get("elemento", "")).strip()
+    viga = str(row.get("viga", "")).strip()
+    posicion = str(row.get("posicion", "")).strip()
+
+    if tipo:
+        parts.append(tipo)
+    if zona:
+        parts.append(zona)
+    if subzona:
+        parts.append(f"Subzona {subzona}")
+    if elemento:
+        parts.append(f"Elemento {elemento}")
+    if viga:
+        parts.append(f"Viga {viga}")
+    if posicion:
+        parts.append(f"Posición {posicion}")
+
+    return " · ".join(parts)
+
+
+def aggregate_locations(locations):
+    if locations.empty:
+        return pd.DataFrame(
+            columns=["codigo", "ubicaciones", "cantidad_ubicaciones"]
+        )
+
+    locations = locations.copy()
+    locations["ubicacion_linea"] = locations.apply(location_line, axis=1)
+
+    return (
+        locations.groupby("codigo", as_index=False)
+        .agg(
+            ubicaciones=(
+                "ubicacion_linea",
+                lambda x: " || ".join(
+                    dict.fromkeys(v for v in x if str(v).strip())
+                ),
+            ),
+            cantidad_ubicaciones=(
+                "ubicacion_linea",
+                lambda x: len(set(v for v in x if str(v).strip())),
+            ),
+        )
+    )
+
+
+def build_products(sales, inventory, locations):
     sales_agg = (
         sales.groupby("codigo", as_index=False)
         .agg(
@@ -331,8 +457,18 @@ def build_products(sales, inventory):
     for col in ["existencia", "pzas", "monto", "precio"]:
         products[col] = products[col].fillna(0.0)
 
+    loc_agg = aggregate_locations(locations)
+    products = products.merge(loc_agg, on="codigo", how="left")
+    products["ubicaciones"] = products["ubicaciones"].fillna("")
+    products["cantidad_ubicaciones"] = (
+        products["cantidad_ubicaciones"].fillna(0).astype(int)
+    )
+
     return products[
-        ["codigo", "descripcion", "existencia", "pzas", "monto", "precio"]
+        [
+            "codigo", "descripcion", "existencia", "pzas", "monto",
+            "precio", "ubicaciones", "cantidad_ubicaciones"
+        ]
     ].copy()
 
 
@@ -404,7 +540,7 @@ def query_products(codes):
 
     sql = sql_text(
         f"""
-        SELECT codigo, descripcion, existencia, pzas, monto, precio
+        SELECT codigo, descripcion, existencia, pzas, monto, precio, ubicaciones, cantidad_ubicaciones
         FROM products
         WHERE codigo IN ({placeholders})
         """
@@ -492,6 +628,8 @@ with tab_query:
                             "pzas": [0.0] * len(missing),
                             "monto": [0.0] * len(missing),
                             "precio": [0.0] * len(missing),
+                            "ubicaciones": [""] * len(missing),
+                            "cantidad_ubicaciones": [0] * len(missing),
                         }
                     )
                     result = pd.concat(
@@ -573,9 +711,31 @@ with tab_query:
                     f'<span>Piezas vendidas</span>'
                     f'<b>{float(row["pzas"]):,.0f}</b>'
                     f'</div>'
-                    f'</div>'
                 )
 
+                ubicaciones = str(row.get("ubicaciones", "") or "").strip()
+
+                if ubicaciones:
+                    location_rows = "".join(
+                        f'<div class="location-line">{loc}</div>'
+                        for loc in ubicaciones.split(" || ")
+                        if loc.strip()
+                    )
+                    card += (
+                        f'<div class="location-box">'
+                        f'<div class="location-title">📍 Ubicaciones ({int(row.get("cantidad_ubicaciones", 0))})</div>'
+                        f'{location_rows}'
+                        f'</div>'
+                    )
+                else:
+                    card += (
+                        f'<div class="location-box">'
+                        f'<div class="location-title">📍 Ubicación</div>'
+                        f'<div class="no-location">Sin ubicación registrada</div>'
+                        f'</div>'
+                    )
+
+                card += '</div>'
                 st.markdown(card, unsafe_allow_html=True)
 
             export = result.rename(
@@ -586,6 +746,8 @@ with tab_query:
                     "pzas": "Piezas vendidas",
                     "monto": "Venta",
                     "precio": "Precio",
+                    "ubicaciones": "Ubicaciones",
+                    "cantidad_ubicaciones": "Cantidad ubicaciones",
                 }
             )
 
@@ -599,7 +761,7 @@ with tab_query:
 with tab_admin:
     st.markdown("### Actualización de datos")
     st.caption(
-        "Carga Vta2026.xlsx y fallaApp.xlsx. "
+        "Carga ventas, existencias y ubicaciones. "
         "No se modifica el formato de los códigos."
     )
 
@@ -625,11 +787,17 @@ with tab_admin:
                 type=["xlsx"],
             )
 
-            if sales_file and inventory_file:
+            locations_file = st.file_uploader(
+                "3. Ubicaciones — XXVEProductAisleRack.csv",
+                type=["csv"],
+            )
+
+            if sales_file and inventory_file and locations_file:
                 try:
                     sales = read_sales(sales_file)
                     inventory = read_inventory(inventory_file)
-                    products = build_products(sales, inventory)
+                    locations = read_locations(locations_file)
+                    products = build_products(sales, inventory, locations)
 
                     total_sales = float(sales["monto"].sum())
 
@@ -659,9 +827,12 @@ with tab_admin:
                         f"{len(inv_codes):,}",
                     )
 
+                    location_codes = locations["codigo"].nunique()
+
                     st.info(
-                        f"Se guardarán {len(products):,} productos "
-                        "consolidados en Supabase."
+                        f"Se guardarán {len(products):,} productos consolidados. "
+                        f"Ubicaciones: {location_codes:,} códigos y "
+                        f"{len(locations):,} registros únicos."
                     )
 
                     if st.button(
@@ -691,5 +862,5 @@ with tab_admin:
                     )
             else:
                 st.info(
-                    "Selecciona los dos archivos para validar."
+                    "Selecciona los tres archivos para validar."
                 )
