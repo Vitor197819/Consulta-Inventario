@@ -254,11 +254,23 @@ def init_db():
 
 def normalize_code(value):
     """
-    Mantiene el código tal como viene en ambos archivos.
+    Código visible/original: conserva ceros iniciales.
     Solo limpia espacios y un posible .0 agregado por Excel.
     """
     value = str(value).strip()
     return re.sub(r"\.0+$", "", value)
+
+
+def match_code(value):
+    """
+    Clave interna de cruce.
+    Para códigos numéricos elimina ceros iniciales:
+    0495089 y 495089 se consideran el mismo artículo.
+    """
+    value = normalize_code(value)
+    if re.fullmatch(r"\d+", value):
+        return value.lstrip("0") or "0"
+    return value.upper()
 
 
 def first_nonempty(series):
@@ -291,6 +303,7 @@ def read_sales(uploaded):
 
     out = pd.DataFrame()
     out["codigo"] = df["CODIGO"].map(normalize_code)
+    out["codigo_match"] = out["codigo"].map(match_code)
     out["descripcion_venta"] = df["DESCRIPCION"].astype(str).str.strip()
     out["pzas"] = to_number(df["PZAS"])
     out["monto"] = to_number(df["MONTO"])
@@ -322,6 +335,7 @@ def read_inventory(uploaded):
 
     out = pd.DataFrame()
     out["codigo"] = df["CODIGO"].map(normalize_code)
+    out["codigo_match"] = out["codigo"].map(match_code)
     out["descripcion_inv"] = df["DESCRIPCION"].astype(str).str.strip()
     out["existencia"] = to_number(df["EXIST"])
 
@@ -366,6 +380,7 @@ def read_locations(uploaded):
 
     out = pd.DataFrame()
     out["codigo"] = df["ARTICULO"].map(normalize_code)
+    out["codigo_match"] = out["codigo"].map(match_code)
     out["zona"] = df["ZONA"].astype(str).str.strip()
     out["subzona"] = df["SUBZONA"].astype(str).str.strip()
     out["elemento"] = df["ELEMENTO"].astype(str).str.strip()
@@ -382,7 +397,7 @@ def read_locations(uploaded):
     # Si el mismo artículo aparece repetido exactamente en la misma ubicación,
     # consolidamos esas filas sumando la cantidad.
     group_cols = [
-        "codigo", "zona", "subzona", "elemento",
+        "codigo_match", "zona", "subzona", "elemento",
         "viga", "posicion", "tipo_ubicacion"
     ]
     out = (
@@ -429,14 +444,14 @@ def location_line(row):
 def aggregate_locations(locations):
     if locations.empty:
         return pd.DataFrame(
-            columns=["codigo", "ubicaciones", "cantidad_ubicaciones"]
+            columns=["codigo_match", "ubicaciones", "cantidad_ubicaciones"]
         )
 
     locations = locations.copy()
     locations["ubicacion_linea"] = locations.apply(location_line, axis=1)
 
     return (
-        locations.groupby("codigo", as_index=False)
+        locations.groupby("codigo_match", as_index=False)
         .agg(
             ubicaciones=(
                 "ubicacion_linea",
@@ -454,8 +469,9 @@ def aggregate_locations(locations):
 
 def build_products(sales, inventory, locations):
     sales_agg = (
-        sales.groupby("codigo", as_index=False)
+        sales.groupby("codigo_match", as_index=False)
         .agg(
+            codigo=("codigo", first_nonempty),
             descripcion_venta=("descripcion_venta", first_nonempty),
             pzas=("pzas", "sum"),
             monto=("monto", "sum"),
@@ -464,14 +480,19 @@ def build_products(sales, inventory, locations):
     )
 
     inv_agg = (
-        inventory.groupby("codigo", as_index=False)
+        inventory.groupby("codigo_match", as_index=False)
         .agg(
+            codigo_inv=("codigo", first_nonempty),
             descripcion_inv=("descripcion_inv", first_nonempty),
             existencia=("existencia", "sum"),
         )
     )
 
-    products = inv_agg.merge(sales_agg, on="codigo", how="outer")
+    products = inv_agg.merge(sales_agg, on="codigo_match", how="outer")
+
+    products["codigo"] = products["codigo"].fillna("")
+    mask_codigo = products["codigo"].astype(str).str.strip().eq("")
+    products.loc[mask_codigo, "codigo"] = products.loc[mask_codigo, "codigo_inv"].fillna("")
 
     products["descripcion"] = products["descripcion_venta"].fillna("")
     mask = products["descripcion"].astype(str).str.strip().eq("")
@@ -483,7 +504,7 @@ def build_products(sales, inventory, locations):
         products[col] = products[col].fillna(0.0)
 
     loc_agg = aggregate_locations(locations)
-    products = products.merge(loc_agg, on="codigo", how="left")
+    products = products.merge(loc_agg, on="codigo_match", how="left")
     products["ubicaciones"] = products["ubicaciones"].fillna("")
     products["cantidad_ubicaciones"] = (
         products["cantidad_ubicaciones"].fillna(0).astype(int)
@@ -491,7 +512,7 @@ def build_products(sales, inventory, locations):
 
     return products[
         [
-            "codigo", "descripcion", "existencia", "pzas", "monto",
+            "codigo", "codigo_match", "descripcion", "existencia", "pzas", "monto",
             "precio", "ubicaciones", "cantidad_ubicaciones"
         ]
     ].copy()
@@ -561,21 +582,22 @@ def query_products(codes):
 
     bind_names = [f"c{i}" for i in range(len(codes))]
     placeholders = ",".join(f":{name}" for name in bind_names)
-    params = {bind_names[i]: codes[i] for i in range(len(codes))}
+    match_codes = [match_code(code) for code in codes]
+    params = {bind_names[i]: match_codes[i] for i in range(len(match_codes))}
 
     sql = sql_text(
         f"""
-        SELECT codigo, descripcion, existencia, pzas, monto, precio, ubicaciones, cantidad_ubicaciones
+        SELECT codigo, codigo_match, descripcion, existencia, pzas, monto, precio, ubicaciones, cantidad_ubicaciones
         FROM products
-        WHERE codigo IN ({placeholders})
+        WHERE codigo_match IN ({placeholders})
         """
     )
 
     with engine.connect() as conn:
         df = pd.read_sql_query(sql, conn, params=params)
 
-    order = {code: i for i, code in enumerate(codes)}
-    df["_order"] = df["codigo"].map(order)
+    order = {match_code(code): i for i, code in enumerate(codes)}
+    df["_order"] = df["codigo_match"].map(order)
     return df.sort_values("_order").drop(columns="_order")
 
 
@@ -638,16 +660,20 @@ with tab_query:
                 result = query_products(codes)
 
                 found = (
-                    set(result["codigo"].astype(str))
+                    set(result["codigo_match"].astype(str))
                     if not result.empty
                     else set()
                 )
-                missing = [code for code in codes if code not in found]
+                missing = [
+                    code for code in codes
+                    if match_code(code) not in found
+                ]
 
                 if missing:
                     missing_df = pd.DataFrame(
                         {
                             "codigo": missing,
+                            "codigo_match": [match_code(c) for c in missing],
                             "descripcion": ["No encontrado"] * len(missing),
                             "existencia": [0.0] * len(missing),
                             "pzas": [0.0] * len(missing),
@@ -662,9 +688,9 @@ with tab_query:
                         ignore_index=True,
                     )
                     order = {
-                        code: i for i, code in enumerate(codes)
+                        match_code(code): i for i, code in enumerate(codes)
                     }
-                    result["_order"] = result["codigo"].map(order)
+                    result["_order"] = result["codigo_match"].map(order)
                     result = result.sort_values("_order").drop(
                         columns="_order"
                     )
@@ -763,7 +789,7 @@ with tab_query:
                 card += '</div>'
                 st.markdown(card, unsafe_allow_html=True)
 
-            export = result.rename(
+            export = result.drop(columns=["codigo_match"], errors="ignore").rename(
                 columns={
                     "codigo": "Código",
                     "descripcion": "Descripción",
@@ -826,8 +852,8 @@ with tab_admin:
 
                     total_sales = float(sales["monto"].sum())
 
-                    sales_codes = set(sales["codigo"])
-                    inv_codes = set(inventory["codigo"])
+                    sales_codes = set(sales["codigo_match"])
+                    inv_codes = set(inventory["codigo_match"])
                     common = len(sales_codes & inv_codes)
 
                     st.markdown("### Validación")
@@ -852,7 +878,7 @@ with tab_admin:
                         f"{len(inv_codes):,}",
                     )
 
-                    location_codes = locations["codigo"].nunique()
+                    location_codes = locations["codigo_match"].nunique()
 
                     st.info(
                         f"Se guardarán {len(products):,} productos consolidados. "
