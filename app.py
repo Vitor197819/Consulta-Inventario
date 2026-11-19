@@ -1,4 +1,3 @@
-
 import io
 import os
 import re
@@ -30,17 +29,26 @@ st.markdown(
     """
     <style>
     :root {
-        --blue:#175cd3;
-        --blue-dark:#0b2f5b;
+        --epa-yellow:#FED403;
+        --epa-blue:#003399;
+        --epa-cyan:#009FE3;
         --green:#079455;
         --red:#d92d20;
-        --text:#101828;
-        --muted:#667085;
-        --border:#e4e7ec;
-        --bg:#f8fafc;
+        --text:#102A43;
+        --muted:#52606D;
+        --border:#D9E2EC;
+        --bg:#FFFDF2;
     }
 
     .stApp { background: var(--bg); }
+
+    [data-testid="stHeader"] {
+        background: var(--epa-yellow);
+    }
+
+    .block-container {
+        border-top: 8px solid var(--epa-yellow);
+    }
 
     .block-container {
         max-width: 720px;
@@ -50,13 +58,13 @@ st.markdown(
 
     h1 {
         font-size: 1.4rem !important;
-        color: var(--blue-dark);
+        color: var(--epa-blue);
     }
 
     .updated-box {
-        background:#eaf4ff;
-        border:1px solid #cfe5ff;
-        color:#175cd3;
+        background:#FFF6B8;
+        border:1px solid #F6C900;
+        color:var(--epa-blue);
         padding:.75rem .9rem;
         border-radius:14px;
         margin:.5rem 0 1rem;
@@ -85,8 +93,13 @@ st.markdown(
     }
 
     .metric-card.blue {
-        background:linear-gradient(180deg,#eff8ff,#fff);
-        border-color:#b2ddff;
+        background:linear-gradient(180deg,#E8F6FD,#fff);
+        border-color:#9BDCF5;
+    }
+
+    .metric-card.yellow {
+        background:linear-gradient(180deg,#FFF7C7,#fff);
+        border-color:#F3D64E;
     }
 
     .metric-value {
@@ -98,7 +111,7 @@ st.markdown(
     }
 
     .green .metric-value { color:var(--green); }
-    .blue .metric-value { color:var(--blue); }
+    .blue .metric-value { color:var(--epa-blue); }
 
     .metric-label {
         margin-top:.35rem;
@@ -142,17 +155,42 @@ st.markdown(
     div.stDownloadButton > button,
     div[data-testid="stFormSubmitButton"] > button {
         width:100%;
-        min-height:46px;
+        min-height:48px;
         border-radius:12px;
-        font-weight:700;
+        font-weight:800;
+        background:var(--epa-blue);
+        color:white;
+        border:2px solid var(--epa-blue);
+    }
+
+    div.stButton > button:hover,
+    div.stDownloadButton > button:hover,
+    div[data-testid="stFormSubmitButton"] > button:hover {
+        background:#002A80;
+        color:white;
+        border-color:#002A80;
     }
 
     [data-testid="stTextArea"] textarea,
     [data-testid="stTextInput"] input {
         background:#fff !important;
-        color:#101828 !important;
-        border:1px solid #d0d5dd !important;
+        color:var(--epa-blue) !important;
+        border:2px solid var(--epa-blue) !important;
         border-radius:12px !important;
+    }
+
+    [data-testid="stTextArea"] textarea {
+        font-size:1.35rem !important;
+        font-weight:800 !important;
+        line-height:1.55 !important;
+        min-height:170px !important;
+        letter-spacing:.02em;
+    }
+
+    [data-testid="stTextArea"] label p {
+        font-size:1.08rem !important;
+        font-weight:800 !important;
+        color:var(--epa-blue) !important;
     }
 
     [data-testid="stTextArea"] label,
@@ -163,8 +201,8 @@ st.markdown(
     }
 
     [data-testid="stFileUploaderDropzone"] {
-        background:#fff !important;
-        border:1.5px dashed #98a2b3 !important;
+        background:#fffdf2 !important;
+        border:1.5px dashed var(--epa-blue) !important;
         border-radius:14px !important;
         min-height:105px !important;
     }
@@ -175,8 +213,14 @@ st.markdown(
 
     [data-testid="stTabs"] button[role="tab"] {
         flex:1;
-        min-height:44px;
-        font-weight:700;
+        min-height:46px;
+        font-weight:800;
+        color:var(--epa-blue) !important;
+    }
+
+    [data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+        color:var(--epa-blue) !important;
+        border-bottom:4px solid var(--epa-yellow) !important;
     }
 
     @media(max-width:600px){
@@ -608,7 +652,7 @@ def clear_codes():
 
 metadata = get_metadata()
 
-st.title("📦 Inventario Tienda 6")
+st.title("EPA · Inventario Tienda 6")
 
 if metadata:
     st.markdown(
@@ -632,7 +676,7 @@ with tab_query:
         with st.form("query_form"):
             query_text = st.text_area(
                 "Códigos a consultar",
-                placeholder="Un código por línea",
+                placeholder="Escribe o pega los códigos aquí\nUn código por línea",
                 height=145,
                 key="query_codes",
             )
